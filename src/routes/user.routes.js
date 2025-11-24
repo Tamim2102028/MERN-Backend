@@ -6,8 +6,10 @@ import {
   refreshAccessToken,
   changeCurrentPassword,
   getCurrentUser,
-  updateAcademicProfile,
+  updateAccountDetails, // সাধারণ তথ্য (Bio, Social Links) আপডেট
+  updateAcademicProfile, // একাডেমিক তথ্য (Auto Chat Trigger) আপডেট
   updateUserAvatar,
+  updateUserCoverImage, // (যদি কন্ট্রোলার বানিয়ে থাকেন, না বানালে কমেন্ট করে রাখবেন)
 } from "../controllers/user.controller.js";
 
 // Middlewares
@@ -24,10 +26,10 @@ import {
 const router = Router();
 
 // ==================================================
-// 🔓 PUBLIC ROUTES
+// 🔓 PUBLIC ROUTES (No Login Required)
 // ==================================================
 
-// Register Route
+// Registration Route (With File Upload & Validation)
 router.post(
   "/register",
   uploadImage.fields([
@@ -42,31 +44,46 @@ router.post(
 router.post("/login", loginUser);
 
 // ==================================================
-// 🔒 SECURED ROUTES (JWT Token Needed)
+// 🔒 SECURED ROUTES (Login Required)
 // ==================================================
 
-// Logout & Token
+// --- Authentication Management ---
 router.post("/logout", verifyJWT, logoutUser);
 router.post("/refresh-token", refreshAccessToken);
-
-// Profile Management
 router.post("/change-password", verifyJWT, changeCurrentPassword);
 router.get("/current-user", verifyJWT, getCurrentUser);
 
-// Academic Onboarding (Auto-Chat Trigger)
+// --- Profile Updates (Separated for Performance) ---
+
+// 1. General Info Update (Name, Bio, Social Links, Skills)
+// এটাতে কোনো ভারী লজিক নেই, তাই সিম্পল আপডেট
+router.patch("/update-general", verifyJWT, updateAccountDetails);
+
+// 2. Academic Info Update (Dept, Session, Institution)
+// ⚠️ CRITICAL: এটা কল করলে ব্যাকএন্ডে Auto-Chat Group লজিক রান হবে
 router.patch(
   "/update-academic",
   verifyJWT,
-  validate(userOnboardingSchema),
+  validate(userOnboardingSchema), // ডাটা ঠিক আছে কিনা চেক করবে
   updateAcademicProfile
 );
 
-// File Updates
+// --- File Updates ---
+
+// Avatar Change
 router.patch(
   "/avatar",
   verifyJWT,
   uploadImage.single("avatar"),
   updateUserAvatar
+);
+
+// Cover Image Change (Optional: যদি কন্ট্রোলার রেডি থাকে)
+router.patch(
+  "/cover-image",
+  verifyJWT,
+  uploadImage.single("coverImage"),
+  updateUserCoverImage
 );
 
 export default router;

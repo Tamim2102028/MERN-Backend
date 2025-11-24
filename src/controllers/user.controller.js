@@ -384,6 +384,84 @@ const updateUserAvatar = asyncHandler(async (req, res) => {
     .json(new ApiResponse(200, avatar.url, "Avatar updated successfully"));
 });
 
+// ==========================================
+// 🚀 9. UPDATE CoverImage
+// ==========================================
+const updateUserCoverImage = asyncHandler(async (req, res) => {
+  const coverImageLocalPath = req.file?.path;
+
+  if (!coverImageLocalPath) {
+    throw new ApiError(400, "Cover image file is missing");
+  }
+
+  const coverImage = await uploadFile(coverImageLocalPath);
+
+  if (!coverImage.url) {
+    throw new ApiError(500, "Error uploading cover image");
+  }
+
+  // ✅ পুরানো ইমেজ ডিলিট করা (যদি থাকে)
+  // req.user.avatar যদি ক্লাউডিনারির URL হয়, তাহলে সেখান থেকে public_id বের করার লজিক বা
+  // আলাদা ফিল্ডে public_id সেভ করে রাখলে ভালো হতো। আপাতত সিম্পল রাখছি।
+  // Future Optimization: User মডেলে 'avatarPublicId' ফিল্ড রাখা।
+
+  await User.findByIdAndUpdate(
+    req.user._id,
+    { $set: { coverImage: coverImage.url } },
+    { new: true }
+  ).select("-password");
+
+  return res
+    .status(200)
+    .json(
+      new ApiResponse(200, coverImage.url, "Cover image updated successfully")
+    );
+});
+
+// ==========================================
+// 🚀 10. UPDATE GENERAL ACCOUNT DETAILS
+// ==========================================
+const updateAccountDetails = asyncHandler(async (req, res) => {
+  const { fullName, nickName, bio, socialLinks, skills, interests } = req.body;
+
+  // 1. ভ্যালিডেশন: অন্তত একটা ফিল্ড তো থাকতে হবে আপডেট করার জন্য
+  if (!fullName && !nickName && !bio && !socialLinks && !skills && !interests) {
+    throw new ApiError(400, "At least one field is required to update");
+  }
+
+  // 2. নিকনেম ইউনিক কিনা চেক করা (যদি ইউজার নিকনেম চেঞ্জ করে)
+  if (nickName) {
+    const existingUser = await User.findOne({ nickName });
+    // যদি অন্য কারো এই নিকনেম থাকে এবং সেটা আমি না হই
+    if (
+      existingUser &&
+      existingUser._id.toString() !== req.user._id.toString()
+    ) {
+      throw new ApiError(409, "Nickname already taken");
+    }
+  }
+
+  // 3. আপডেট করা
+  const user = await User.findByIdAndUpdate(
+    req.user._id,
+    {
+      $set: {
+        fullName,
+        nickName,
+        bio,
+        socialLinks, // ফ্রন্টএন্ড পুরো অবজেক্ট পাঠাবে: { facebook: "...", linkedin: "..." }
+        skills, // Array পাঠাবে
+        interests, // Array পাঠাবে
+      },
+    },
+    { new: true } // আপডেটেড ডাটা ফেরত দিবে
+  ).select("-password -refreshToken");
+
+  return res
+    .status(200)
+    .json(new ApiResponse(200, user, "Account details updated successfully"));
+});
+
 export {
   registerUser,
   loginUser,
@@ -393,4 +471,6 @@ export {
   getCurrentUser,
   updateAcademicProfile,
   updateUserAvatar,
+  updateUserCoverImage,
+  updateAccountDetails,
 };
