@@ -1,17 +1,21 @@
-import { Schema, model } from "mongoose";
-import bcrypt from "bcrypt";
+import mongoose, { Schema } from "mongoose";
 import jwt from "jsonwebtoken";
+import bcrypt from "bcrypt";
+
+import {
+  INSTITUTION_TYPES,
+  USER_TYPES,
+  VERIFICATION_STATUS,
+  TEACHER_RANKS,
+  GENDERS,
+  RELIGIONS,
+  ACCOUNT_STATUS,
+} from "../constants/index.js";
 
 const userSchema = new Schema(
   {
-    userName: {
-      type: String,
-      required: true,
-      unique: true,
-      lowercase: true,
-      trim: true,
-      index: true, // for faster search
-    },
+    // --- Identity ---
+    fullName: { type: String, required: true, trim: true, index: true },
     email: {
       type: String,
       required: true,
@@ -19,83 +23,140 @@ const userSchema = new Schema(
       lowercase: true,
       trim: true,
     },
-    fullName: {
+    password: { type: String, required: [true, "Password is required"] },
+    nickName: { type: String, trim: true, index: true },
+    phoneNumber: { type: String, trim: true, index: true, default: "" },
+
+    // --- Profile ---
+    avatar: {
       type: String,
-      required: true,
-      trim: true,
+      default:
+        "https://res.cloudinary.com/demo/image/upload/v1/default_avatar.png",
+    },
+    coverImage: { type: String },
+    bio: { type: String, trim: true, maxLength: 300 },
+
+    gender: { type: String, enum: Object.values(GENDERS) },
+    religion: { type: String, enum: Object.values(RELIGIONS) },
+
+    socialLinks: {
+      linkedin: { type: String },
+      github: { type: String },
+      website: { type: String },
+      facebook: { type: String },
+    },
+    skills: [{ type: String, trim: true }],
+    interests: [{ type: String, trim: true }],
+
+    // --- Social Stats (✅ ADDED) ---
+    connectionsCount: { type: Number, default: 0 }, // Friends Count
+    followingCount: { type: Number, default: 0 }, // Institutions Followed
+
+    // --- Institutional Data ---
+    userType: {
+      type: String,
+      enum: Object.values(USER_TYPES),
+      default: USER_TYPES.STUDENT,
       index: true,
     },
-    avatar: {
-      type: String, // cloudnary url
-      require: true,
+    institution: {
+      type: Schema.Types.ObjectId,
+      ref: "Institution",
+      index: true,
     },
-    coverImage: {
-      type: String, // cloudnary url
+    institutionType: { type: String, enum: Object.values(INSTITUTION_TYPES) },
+
+    // --- Academic Info ---
+    academicInfo: {
+      department: { type: Schema.Types.ObjectId, ref: "Department" },
+      studentId: { type: String },
+      session: { type: String },
+      currentSemester: { type: Number },
+      section: { type: String, trim: true },
+      isCr: { type: Boolean, default: false },
+      teacherId: { type: String },
+      rank: { type: String, enum: Object.values(TEACHER_RANKS) },
+      officeHours: [
+        {
+          day: { type: String },
+          timeRange: { type: String },
+          room: { type: String },
+        },
+      ],
     },
-    watchHistory: [
-      {
-        type: Schema.Types.ObjectId,
-        ref: "Video",
-      },
-    ],
-    password: {
+
+    // --- Status ---
+    accountStatus: {
       type: String,
-      required: [true, "Please provide a password"],
+      enum: Object.values(ACCOUNT_STATUS),
+      default: ACCOUNT_STATUS.ACTIVE,
     },
-    refreshToken: {
-      // for refresh token storage
+    verificationStatus: {
       type: String,
+      enum: Object.values(VERIFICATION_STATUS),
+      default: VERIFICATION_STATUS.UNVERIFIED,
+      index: true,
     },
+    refreshToken: { type: String },
   },
   { timestamps: true }
 );
 
-// Hash the password before saving the user model
-// use function keyword rather than arrow function to access "this"
-userSchema.pre("save", async function (next) {
-  if (!this.isModified("password")) {
-    // if password is not modified, skip hashing
-    return next();
+// Indexes & Methods (Unchanged)
+userSchema.index(
+  { institution: 1, "academicInfo.studentId": 1 },
+  {
+    unique: true,
+    sparse: true,
+    partialFilterExpression: {
+      userType: USER_TYPES.STUDENT,
+      "academicInfo.studentId": { $exists: true },
+    },
   }
-  this.password = await bcrypt.hash(this.password, 12); // 12 salt rounds
+);
+userSchema.index(
+  { institution: 1, "academicInfo.teacherId": 1 },
+  {
+    unique: true,
+    sparse: true,
+    partialFilterExpression: {
+      userType: USER_TYPES.TEACHER,
+      "academicInfo.teacherId": { $exists: true },
+    },
+  }
+);
+userSchema.index({ nickName: 1, fullName: 1 });
+userSchema.index({ skills: 1 });
+userSchema.index({ institution: 1, "academicInfo.department": 1 });
+
+userSchema.pre("save", async function (next) {
+  if (!this.isModified("password")) return next();
+  this.password = await bcrypt.hash(this.password, 12);
   next();
 });
 
-// --- -- - Helper methods
-
-// method to compare given password with database hash
 userSchema.methods.isPasswordCorrect = async function (password) {
   return await bcrypt.compare(password, this.password);
 };
 
-// method to generate JWTs
 userSchema.methods.generateAccessToken = function () {
   return jwt.sign(
     {
-      userId: this._id,
+      _id: this._id,
       email: this.email,
-      userName: this.userName,
-      fullName: this.fullName,
+      userType: this.userType,
+      institution: this.institution || null,
+      nickName: this.nickName,
     },
     process.env.ACCESS_TOKEN_SECRET,
-    {
-      expiresIn: process.env.ACCESS_TOKEN_EXPIRES_IN,
-    }
+    { expiresIn: process.env.ACCESS_TOKEN_EXPIRY }
   );
 };
 
-// method to generate refresh token
 userSchema.methods.generateRefreshToken = function () {
-  return jwt.sign(
-    {
-      userId: this._id,
-    },
-    process.env.REFRESH_TOKEN_SECRET,
-    {
-      expiresIn: process.env.REFRESH_TOKEN_EXPIRES_IN,
-    }
-  );
+  return jwt.sign({ _id: this._id }, process.env.REFRESH_TOKEN_SECRET, {
+    expiresIn: process.env.REFRESH_TOKEN_EXPIRY,
+  });
 };
 
-const User = model("User", userSchema);
-export default User;
+export const User = mongoose.model("User", userSchema);

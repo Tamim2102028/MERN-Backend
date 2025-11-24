@@ -1,0 +1,4 @@
+export const INSTITUTION_TYPES = {
+  UNIVERSITY: "UNIVERSITY",
+  // COLLEGE: "COLLEGE",
+};
