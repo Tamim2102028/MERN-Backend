@@ -1,8 +1,8 @@
 export const USER_TYPES = {
-  OWNER: "OWNER",       
-  ADMIN: "ADMIN",       
-  TEACHER: "TEACHER",   
-  STUDENT: "STUDENT",   
+  OWNER: "OWNER",
+  ADMIN: "ADMIN",
+  TEACHER: "TEACHER",
+  STUDENT: "STUDENT",
 };
 
 export const TEACHER_RANKS = {
@@ -10,17 +10,17 @@ export const TEACHER_RANKS = {
   ASSOCIATE_PROFESSOR: "Associate Professor",
   ASSISTANT_PROFESSOR: "Assistant Professor",
   LECTURER: "Lecturer",
-  INSTRUCTOR: "Instructor"
+  INSTRUCTOR: "Instructor",
 };
 
 export const GENDERS = {
   MALE: "MALE",
-  FEMALE: "FEMALE"
+  FEMALE: "FEMALE",
 };
 
 export const RELIGIONS = {
   ISLAM: "Islam",
   HINDU: "Hindu",
   CHRISTIAN: "Christian",
-  OTHERS: "Others"
+  OTHERS: "Others",
 };
