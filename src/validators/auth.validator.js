@@ -1,39 +1,49 @@
 import Joi from "joi";
 import { USER_TYPES } from "../constants/index.js";
 
-// ১. রেজিস্ট্রেশন স্কিমা (Basic Info Only)
-// এখানে আমরা Institution/Dept চাইব না, কারণ সেটা ২য় ধাপে আসবে।
+// ১. রেজিস্ট্রেশন স্কিমা
 const userRegisterSchema = Joi.object({
   fullName: Joi.string().trim().min(3).max(50).required().messages({
     "string.empty": "Full name is required",
     "string.min": "Full name must be at least 3 characters",
   }),
 
-  email: Joi.string().email().trim().lowercase().required().messages({
-    "string.email": "Please provide a valid email address",
-  }),
+  email: Joi.string().email().trim().lowercase().required(),
 
-  password: Joi.string().min(6).required().messages({
-    "string.min": "Password must be at least 6 characters long",
-  }),
+  // পাসওয়ার্ড পলিসি (স্ট্রং)
+  password: Joi.string()
+    .pattern(new RegExp("^(?=.*[a-z])(?=.*[A-Z])(?=.*[0-9])"))
+    .min(8)
+    .required()
+    .messages({
+      "string.pattern.base":
+        "Password must contain at least one lowercase, one uppercase letter and one number",
+      "string.min": "Password must be at least 8 characters long",
+    }),
 
   nickName: Joi.string().trim().optional(),
 
+  // 🔥 CRITICAL SECURITY FIX 🔥
+  // এখানে আমরা whitelist করে দিচ্ছি। এর বাইরে কিছু পাঠালেই Error খাবে।
   userType: Joi.string()
-    .valid(...Object.values(USER_TYPES)) // STUDENT or TEACHER
-    .required(),
+    .valid(USER_TYPES.STUDENT, USER_TYPES.TEACHER) // ONLY THESE TWO ALLOWED
+    .required()
+    .messages({
+      "any.only":
+        "Security Alert: You can only register as STUDENT or TEACHER.",
+    }),
 });
 
-// ২. অনবোর্ডিং স্কিমা (Academic Info Update)
-// এটা আমরা পরে প্রোফাইল আপডেট কন্ট্রোলারে ব্যবহার করব
+// ... userOnboardingSchema যা ছিল তাই থাকবে ...
 const userOnboardingSchema = Joi.object({
   institution: Joi.string().hex().length(24).required(),
   department: Joi.string().hex().length(24).required(),
-
-  // একাডেমিক ইনফো
-  session: Joi.string().required(), // e.g. "2023-24"
+  session: Joi.string().optional(),
   section: Joi.string().optional().allow(""),
   studentId: Joi.string().optional().allow(""),
+  teacherId: Joi.string().optional().allow(""),
+  rank: Joi.string().optional(),
+  officeHours: Joi.array().optional(),
 });
 
 export { userRegisterSchema, userOnboardingSchema };

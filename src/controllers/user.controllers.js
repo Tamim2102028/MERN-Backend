@@ -1,11 +1,12 @@
 import { asyncHandler } from "../utils/asyncHandler.js";
 import { ApiError } from "../utils/ApiError.js";
 import { User } from "../models/user.model.js";
-import { uploadFile, deleteFile } from "../utils/fileUpload.js";
+import { uploadFile } from "../utils/fileUpload.js";
 import { ApiResponse } from "../utils/ApiResponse.js";
 import jwt from "jsonwebtoken";
 
-// ✅ Service Import (New)
+// ✅ Imports for Logic
+import { USER_TYPES } from "../constants/index.js";
 import { verifyStudentDomain } from "../services/academic.service.js";
 
 // --- Utility: Token Generator ---
@@ -33,6 +34,11 @@ const generateAccessAndRefreshTokens = async (userId) => {
 const registerUser = asyncHandler(async (req, res) => {
   const { fullName, email, password, nickName, userType } = req.body;
 
+  // 🔥 MANUAL CHECK (Double Security)
+  if ([USER_TYPES.ADMIN, USER_TYPES.OWNER].includes(userType)) {
+    throw new ApiError(403, "Nice try! Owner/Admin creation is restricted.");
+  }
+
   const existedUser = await User.findOne({
     $or: [{ email }, { nickName }],
   });
@@ -41,7 +47,6 @@ const registerUser = asyncHandler(async (req, res) => {
     throw new ApiError(409, "User with email or nickname already exists");
   }
 
-  // File handling
   let avatarLocalPath = req.files?.avatar?.[0]?.path;
   let coverImageLocalPath = req.files?.coverImage?.[0]?.path;
 
@@ -60,9 +65,7 @@ const registerUser = asyncHandler(async (req, res) => {
     password,
     nickName: nickName || "",
     userType,
-    // ✅ Schema যদি Object হয় তাহলে এখানে { url: ..., public_id: ... } দিতে হবে
-    // আপাতত তোমার বর্তমান কোড অনুযায়ী স্ট্রিং রাখলাম
-    avatar: avatar?.url || "",
+    avatar: avatar?.url || "", // Future TODO: Save as Object {url, public_id}
     coverImage: coverImage?.url || "",
   });
 
@@ -71,19 +74,16 @@ const registerUser = asyncHandler(async (req, res) => {
   );
 
   if (!createdUser) {
-    // ক্লিনআপ (যদি ডাটাবেস ফেইল করে)
-    // Cloudinary Delete Logic (ফিউচারে public_id সহ করা উচিত)
     throw new ApiError(500, "Something went wrong while registering the user");
   }
 
-  // Auto Login
   const { accessToken, refreshToken } = await generateAccessAndRefreshTokens(
     user._id
   );
 
   const options = {
     httpOnly: true,
-    secure: process.env.NODE_ENV === "production", // ✅ Production Fix
+    secure: process.env.NODE_ENV === "production",
   };
 
   return res
@@ -251,38 +251,67 @@ const getCurrentUser = asyncHandler(async (req, res) => {
 // 🚀 7. UPDATE ACADEMIC PROFILE (ONBOARDING)
 // ==========================================
 const updateAcademicProfile = asyncHandler(async (req, res) => {
-  const { institution, department, session, section, studentId } = req.body;
+  const {
+    institution,
+    department,
+    // Student specific
+    session,
+    section,
+    studentId,
+    // Teacher specific
+    teacherId,
+    rank,
+    officeHours,
+  } = req.body;
 
   // 1. Basic Validation
-  if (!institution || !department || !session) {
-    throw new ApiError(400, "Institution, Department and Session are required");
+  if (!institution || !department) {
+    throw new ApiError(400, "Institution and Department are required");
   }
 
-  // 2. ✅ Service Call: Check Domain Verification
-  // লজিক এখন 'academic.service.js' ফাইলে আছে
-  const verificationStatus = verifyStudentDomain(req.user.email, institution);
+  // 2. Service Call: Check Domain Verification
+  const verificationStatus = await verifyStudentDomain(
+    req.user.email,
+    institution
+  );
 
-  // 3. Update User
+  // 3. Logic Split based on User Type (To prevent Data Pollution)
+  let academicInfoPayload = {
+    department, // Common for both
+  };
+
+  const currentUserType = req.user.userType;
+
+  if (currentUserType === USER_TYPES.STUDENT) {
+    // 🎓 STUDENT LOGIC
+    if (!session) {
+      throw new ApiError(400, "Session is required for Students");
+    }
+    academicInfoPayload.session = session;
+    academicInfoPayload.section = section;
+    academicInfoPayload.studentId = studentId;
+  } else if (currentUserType === USER_TYPES.TEACHER) {
+    // 👨‍🏫 TEACHER LOGIC (No Session)
+    academicInfoPayload.teacherId = teacherId;
+    academicInfoPayload.rank = rank;
+    academicInfoPayload.officeHours = officeHours;
+  }
+
+  // 4. Update User
   const user = await User.findByIdAndUpdate(
     req.user._id,
     {
       $set: {
         institution,
-        academicInfo: {
-          department,
-          session,
-          section,
-          studentId,
-        },
-        // যদি ভেরিফাইড হয়, স্ট্যাটাস আপডেট হবে। না হলে যা আছে তাই (বা UNVERIFIED)
-        verificationStatus: verificationStatus,
+        academicInfo: academicInfoPayload,
+        // Status update logic
+        ...(verificationStatus === "VERIFIED" && {
+          verificationStatus: "VERIFIED",
+        }),
       },
     },
     { new: true }
   ).select("-password -refreshToken");
-
-  // ❌ Auto-Chat Group Logic Removed for Complexity Reduction
-  // Future Plan: Add this back using a Background Job or separate Service call
 
   return res
     .status(200)
@@ -290,7 +319,7 @@ const updateAcademicProfile = asyncHandler(async (req, res) => {
       new ApiResponse(
         200,
         user,
-        `Academic profile updated. Status: ${verificationStatus}`
+        `Academic profile updated as ${currentUserType}. Status: ${verificationStatus}`
       )
     );
 });
@@ -310,8 +339,6 @@ const updateUserAvatar = asyncHandler(async (req, res) => {
   if (!avatar.url) {
     throw new ApiError(500, "Error uploading avatar");
   }
-
-  // TODO: Delete old image logic using public_id (When Schema Updated)
 
   await User.findByIdAndUpdate(
     req.user._id,
@@ -357,12 +384,35 @@ const updateUserCoverImage = asyncHandler(async (req, res) => {
 // 🚀 10. UPDATE GENERAL ACCOUNT DETAILS
 // ==========================================
 const updateAccountDetails = asyncHandler(async (req, res) => {
-  const { fullName, nickName, bio, socialLinks, skills, interests } = req.body;
+  const {
+    fullName,
+    nickName,
+    bio,
+    socialLinks,
+    skills,
+    interests,
+    // New Fields
+    phoneNumber,
+    gender,
+    religion,
+  } = req.body;
 
-  if (!fullName && !nickName && !bio && !socialLinks && !skills && !interests) {
+  // 1. Check if at least one field is present
+  if (
+    !fullName &&
+    !nickName &&
+    !bio &&
+    !socialLinks &&
+    !skills &&
+    !interests &&
+    !phoneNumber &&
+    !gender &&
+    !religion
+  ) {
     throw new ApiError(400, "At least one field is required to update");
   }
 
+  // 2. Nickname Check
   if (nickName) {
     const existingUser = await User.findOne({ nickName });
     if (
@@ -373,6 +423,7 @@ const updateAccountDetails = asyncHandler(async (req, res) => {
     }
   }
 
+  // 3. Update User
   const user = await User.findByIdAndUpdate(
     req.user._id,
     {
@@ -383,6 +434,9 @@ const updateAccountDetails = asyncHandler(async (req, res) => {
         socialLinks,
         skills,
         interests,
+        phoneNumber,
+        gender,
+        religion,
       },
     },
     { new: true }
