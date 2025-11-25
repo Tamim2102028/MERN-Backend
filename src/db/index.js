@@ -1,5 +1,5 @@
 import mongoose from "mongoose";
-import { DB_name } from "./constants.js";
+import { DB_NAME } from "../constants/index.js";
 
 const connectDB = async () => {
   // --- ধাপ ১: কানেকশনের পরের অবস্থা পর্যবেক্ষণের জন্য ইভেন্ট লিসেনার সেট করা ---
@@ -27,7 +27,7 @@ const connectDB = async () => {
     // এখানে connect() ফাংশনকে await করা হচ্ছে।
     // সফল হলে, উপরের 'connected' ইভেন্টটি স্বয়ংক্রিয়ভাবে কাজ করবে।
     // আপনাকে এখানে আলাদা করে console.log করতে হবে না।
-    await mongoose.connect(`${process.env.DB_URL}/${DB_name}`); // সাধারণত URL এবং DB নামের মাঝে একটি '/' থাকে।
+    await mongoose.connect(`${process.env.DB_URL}/${DB_NAME}`); // সাধারণত URL এবং DB নামের মাঝে একটি '/' থাকে।
   } catch (error) {
     // এই catch ব্লকটি শুধুমাত্র *প্রথম* কানেকশন ব্যর্থ হলে কাজ করবে।
     console.error(`\n❌ Initial MongoDB connection FAILED: ${error.message}`);

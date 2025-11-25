@@ -5,10 +5,8 @@ import { uploadFile, deleteFile } from "../utils/fileUpload.js";
 import { ApiResponse } from "../utils/ApiResponse.js";
 import jwt from "jsonwebtoken";
 
-// Auto-Chat Logic এর জন্য
-import { Conversation } from "../models/conversation.model.js";
-import { ChatMembership } from "../models/chatMembership.model.js";
-import { CHAT_TYPES } from "../constants/index.js";
+// ✅ Service Import (New)
+import { verifyStudentDomain } from "../services/academic.service.js";
 
 // --- Utility: Token Generator ---
 const generateAccessAndRefreshTokens = async (userId) => {
@@ -29,75 +27,6 @@ const generateAccessAndRefreshTokens = async (userId) => {
   }
 };
 
-// --- Utility: Auto Group Join Logic (For Academic Update) ---
-const addUserToAutoGroups = async (
-  user,
-  institutionId,
-  deptId,
-  session,
-  section
-) => {
-  try {
-    // 1. Batch Group Check
-    let batchGroup = await Conversation.findOne({
-      "targetCriteria.institution": institutionId,
-      "targetCriteria.department": deptId,
-      "targetCriteria.session": session,
-      type: CHAT_TYPES.BATCH_DEPT_CHAT,
-    });
-
-    if (!batchGroup) {
-      batchGroup = await Conversation.create({
-        type: CHAT_TYPES.BATCH_DEPT_CHAT,
-        groupName: `Official Batch ${session}`,
-        targetCriteria: {
-          institution: institutionId,
-          department: deptId,
-          session: session,
-        },
-      });
-    }
-
-    await ChatMembership.findOneAndUpdate(
-      { conversation: batchGroup._id, user: user._id },
-      { role: "MEMBER" },
-      { upsert: true, new: true }
-    );
-
-    // 2. Section Group Check (If section exists)
-    if (section) {
-      let sectionGroup = await Conversation.findOne({
-        "targetCriteria.institution": institutionId,
-        "targetCriteria.department": deptId,
-        "targetCriteria.session": session,
-        "targetCriteria.section": section,
-        type: CHAT_TYPES.SECTION_CHAT,
-      });
-
-      if (!sectionGroup) {
-        sectionGroup = await Conversation.create({
-          type: CHAT_TYPES.SECTION_CHAT,
-          groupName: `Section ${section} (${session})`,
-          targetCriteria: {
-            institution: institutionId,
-            department: deptId,
-            session: session,
-            section: section,
-          },
-        });
-      }
-
-      await ChatMembership.findOneAndUpdate(
-        { conversation: sectionGroup._id, user: user._id },
-        { role: "MEMBER" },
-        { upsert: true, new: true }
-      );
-    }
-  } catch (error) {
-    console.error("Auto-Join Failed:", error);
-  }
-};
-
 // ==========================================
 // 🚀 1. REGISTER USER
 // ==========================================
@@ -112,10 +41,12 @@ const registerUser = asyncHandler(async (req, res) => {
     throw new ApiError(409, "User with email or nickname already exists");
   }
 
+  // File handling
   let avatarLocalPath = req.files?.avatar?.[0]?.path;
   let coverImageLocalPath = req.files?.coverImage?.[0]?.path;
 
   let avatar, coverImage;
+
   try {
     if (avatarLocalPath) avatar = await uploadFile(avatarLocalPath);
     if (coverImageLocalPath) coverImage = await uploadFile(coverImageLocalPath);
@@ -129,6 +60,8 @@ const registerUser = asyncHandler(async (req, res) => {
     password,
     nickName: nickName || "",
     userType,
+    // ✅ Schema যদি Object হয় তাহলে এখানে { url: ..., public_id: ... } দিতে হবে
+    // আপাতত তোমার বর্তমান কোড অনুযায়ী স্ট্রিং রাখলাম
     avatar: avatar?.url || "",
     coverImage: coverImage?.url || "",
   });
@@ -138,19 +71,19 @@ const registerUser = asyncHandler(async (req, res) => {
   );
 
   if (!createdUser) {
-    if (avatar?.public_id) await deleteFile(avatar.public_id);
-    if (coverImage?.public_id) await deleteFile(coverImage.public_id);
+    // ক্লিনআপ (যদি ডাটাবেস ফেইল করে)
+    // Cloudinary Delete Logic (ফিউচারে public_id সহ করা উচিত)
     throw new ApiError(500, "Something went wrong while registering the user");
   }
 
-  // Auto Login after Register
+  // Auto Login
   const { accessToken, refreshToken } = await generateAccessAndRefreshTokens(
     user._id
   );
 
   const options = {
     httpOnly: true,
-    secure: true,
+    secure: process.env.NODE_ENV === "production", // ✅ Production Fix
   };
 
   return res
@@ -200,7 +133,7 @@ const loginUser = asyncHandler(async (req, res) => {
 
   const options = {
     httpOnly: true,
-    secure: true,
+    secure: process.env.NODE_ENV === "production",
   };
 
   return res
@@ -228,7 +161,7 @@ const logoutUser = asyncHandler(async (req, res) => {
 
   const options = {
     httpOnly: true,
-    secure: true,
+    secure: process.env.NODE_ENV === "production",
   };
 
   return res
@@ -263,7 +196,10 @@ const refreshAccessToken = asyncHandler(async (req, res) => {
     const { accessToken, newRefreshToken } =
       await generateAccessAndRefreshTokens(user._id);
 
-    const options = { httpOnly: true, secure: true };
+    const options = {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+    };
 
     return res
       .status(200)
@@ -314,14 +250,19 @@ const getCurrentUser = asyncHandler(async (req, res) => {
 // ==========================================
 // 🚀 7. UPDATE ACADEMIC PROFILE (ONBOARDING)
 // ==========================================
-// এই ফাংশনটিই মূলত "Auto Chat Group" এর ট্রিগার পয়েন্ট
 const updateAcademicProfile = asyncHandler(async (req, res) => {
   const { institution, department, session, section, studentId } = req.body;
 
+  // 1. Basic Validation
   if (!institution || !department || !session) {
     throw new ApiError(400, "Institution, Department and Session are required");
   }
 
+  // 2. ✅ Service Call: Check Domain Verification
+  // লজিক এখন 'academic.service.js' ফাইলে আছে
+  const verificationStatus = verifyStudentDomain(req.user.email, institution);
+
+  // 3. Update User
   const user = await User.findByIdAndUpdate(
     req.user._id,
     {
@@ -333,13 +274,15 @@ const updateAcademicProfile = asyncHandler(async (req, res) => {
           section,
           studentId,
         },
+        // যদি ভেরিফাইড হয়, স্ট্যাটাস আপডেট হবে। না হলে যা আছে তাই (বা UNVERIFIED)
+        verificationStatus: verificationStatus,
       },
     },
     { new: true }
   ).select("-password -refreshToken");
 
-  // ✅ ট্রিগার: অটো গ্রুপে অ্যাড করা
-  await addUserToAutoGroups(user, institution, department, session, section);
+  // ❌ Auto-Chat Group Logic Removed for Complexity Reduction
+  // Future Plan: Add this back using a Background Job or separate Service call
 
   return res
     .status(200)
@@ -347,7 +290,7 @@ const updateAcademicProfile = asyncHandler(async (req, res) => {
       new ApiResponse(
         200,
         user,
-        "Academic profile updated and joined groups successfully"
+        `Academic profile updated. Status: ${verificationStatus}`
       )
     );
 });
@@ -368,10 +311,7 @@ const updateUserAvatar = asyncHandler(async (req, res) => {
     throw new ApiError(500, "Error uploading avatar");
   }
 
-  // ✅ পুরানো ইমেজ ডিলিট করা (যদি থাকে)
-  // req.user.avatar যদি ক্লাউডিনারির URL হয়, তাহলে সেখান থেকে public_id বের করার লজিক বা
-  // আলাদা ফিল্ডে public_id সেভ করে রাখলে ভালো হতো। আপাতত সিম্পল রাখছি।
-  // Future Optimization: User মডেলে 'avatarPublicId' ফিল্ড রাখা।
+  // TODO: Delete old image logic using public_id (When Schema Updated)
 
   await User.findByIdAndUpdate(
     req.user._id,
@@ -400,11 +340,6 @@ const updateUserCoverImage = asyncHandler(async (req, res) => {
     throw new ApiError(500, "Error uploading cover image");
   }
 
-  // ✅ পুরানো ইমেজ ডিলিট করা (যদি থাকে)
-  // req.user.avatar যদি ক্লাউডিনারির URL হয়, তাহলে সেখান থেকে public_id বের করার লজিক বা
-  // আলাদা ফিল্ডে public_id সেভ করে রাখলে ভালো হতো। আপাতত সিম্পল রাখছি।
-  // Future Optimization: User মডেলে 'avatarPublicId' ফিল্ড রাখা।
-
   await User.findByIdAndUpdate(
     req.user._id,
     { $set: { coverImage: coverImage.url } },
@@ -424,15 +359,12 @@ const updateUserCoverImage = asyncHandler(async (req, res) => {
 const updateAccountDetails = asyncHandler(async (req, res) => {
   const { fullName, nickName, bio, socialLinks, skills, interests } = req.body;
 
-  // 1. ভ্যালিডেশন: অন্তত একটা ফিল্ড তো থাকতে হবে আপডেট করার জন্য
   if (!fullName && !nickName && !bio && !socialLinks && !skills && !interests) {
     throw new ApiError(400, "At least one field is required to update");
   }
 
-  // 2. নিকনেম ইউনিক কিনা চেক করা (যদি ইউজার নিকনেম চেঞ্জ করে)
   if (nickName) {
     const existingUser = await User.findOne({ nickName });
-    // যদি অন্য কারো এই নিকনেম থাকে এবং সেটা আমি না হই
     if (
       existingUser &&
       existingUser._id.toString() !== req.user._id.toString()
@@ -441,7 +373,6 @@ const updateAccountDetails = asyncHandler(async (req, res) => {
     }
   }
 
-  // 3. আপডেট করা
   const user = await User.findByIdAndUpdate(
     req.user._id,
     {
@@ -449,12 +380,12 @@ const updateAccountDetails = asyncHandler(async (req, res) => {
         fullName,
         nickName,
         bio,
-        socialLinks, // ফ্রন্টএন্ড পুরো অবজেক্ট পাঠাবে: { facebook: "...", linkedin: "..." }
-        skills, // Array পাঠাবে
-        interests, // Array পাঠাবে
+        socialLinks,
+        skills,
+        interests,
       },
     },
-    { new: true } // আপডেটেড ডাটা ফেরত দিবে
+    { new: true }
   ).select("-password -refreshToken");
 
   return res
