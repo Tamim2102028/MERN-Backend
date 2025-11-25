@@ -1,46 +1,29 @@
 import { Institution } from "../models/institution.model.js";
-import { VERIFICATION_STATUS } from "../constants/index.js";
 
 /**
- * সার্ভিস: ইউজারের ইমেইল এবং ইনস্টিটিউশন ডোমেইন চেক করা
- * @param {String} userEmail - ইউজারের ইমেইল (e.g. student@du.ac.bd)
- * @param {String} institutionId - ইনস্টিটিউশনের MongoDB ID
- * @returns {String} "VERIFIED" | "UNVERIFIED"
+ * সার্ভিস: চেক করে ইমেইলটি কোনো স্টুডেন্ট/ইন্সটিটিউশন ইমেইল কিনা।
+ * @param {String} email - ইউজারের ইমেইল (e.g. student@buet.ac.bd)
+ * @returns {Boolean} true if valid domain found, else false
  */
-
-export const verifyStudentDomain = async (userEmail, institutionId) => {
+export const checkStudentEmail = async (email) => {
   try {
-    if (!userEmail || !institutionId) {
-      return VERIFICATION_STATUS.UNVERIFIED;
+    if (!email || !email.includes("@")) {
+      return false;
     }
 
-    // ১. ডাটাবেস থেকে ইনস্টিটিউশন বের করা
-    const institution = await Institution.findById(institutionId);
+    // ১. ইমেইল থেকে ডোমেইন বের করা (abc@buet.ac.bd -> buet.ac.bd)
+    const domain = email.split("@")[1].toLowerCase();
 
-    // ইনস্টিটিউশন না পাওয়া গেলে বা ভ্যালিড ডোমেইন সেট করা না থাকলে
-    if (
-      !institution ||
-      !institution.validDomains ||
-      institution.validDomains.length === 0
-    ) {
-      return VERIFICATION_STATUS.UNVERIFIED;
-    }
+    // ২. ডাটাবেসে চেক করা কোনো ইনস্টিটিউশনের validDomains এ এই ডোমেইন আছে কিনা
+    // findOne ব্যবহার করছি কারণ একটা পেলেই আমাদের চলবে।
+    const institution = await Institution.findOne({
+      validDomains: domain,
+    }).select("_id"); // শুধু আইডি আনলেই হবে, পুরো অবজেক্ট দরকার নেই
 
-    // ২. ইমেইল থেকে ডোমেইন আলাদা করা (abc@du.ac.bd -> du.ac.bd)
-    const emailParts = userEmail.split("@");
-    if (emailParts.length !== 2) return VERIFICATION_STATUS.UNVERIFIED;
-
-    const userDomain = emailParts[1].toLowerCase();
-
-    // ৩. চেক করা ডোমেইন লিস্টে আছে কিনা
-    const isMatch = institution.validDomains.includes(userDomain);
-
-    return isMatch
-      ? VERIFICATION_STATUS.VERIFIED
-      : VERIFICATION_STATUS.UNVERIFIED;
+    // ৩. যদি ইনস্টিটিউশন পাওয়া যায়, তার মানে এটা স্টুডেন্ট মেইল
+    return !!institution; // Found = true, Not Found = false
   } catch (error) {
-    console.error("Service Error (verifyStudentDomain):", error.message);
-    // সার্ভিসে এরর হলে ডিফল্ট হিসেবে UNVERIFIED রিটার্ন করাই নিরাপদ
-    return VERIFICATION_STATUS.UNVERIFIED;
+    console.error("Service Error (checkStudentEmail):", error.message);
+    return false; // সেফ সাইড
   }
 };

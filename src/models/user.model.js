@@ -5,7 +5,6 @@ import bcrypt from "bcrypt";
 import {
   INSTITUTION_TYPES,
   USER_TYPES,
-  VERIFICATION_STATUS,
   TEACHER_RANKS,
   GENDERS,
   RELIGIONS,
@@ -25,7 +24,14 @@ const userSchema = new Schema(
     },
     password: { type: String, required: [true, "Password is required"] },
     nickName: { type: String, trim: true, index: true },
-    phoneNumber: { type: String, trim: true, index: true, default: "" },
+    phoneNumber: {
+      type: String,
+      trim: true,
+      unique: true,
+      sparse: true, // ✅ এটাই ম্যাজিক, ফোন নম্বর না থাকলে ইউনিক এরর দেবে না
+      index: true,
+      default: "",
+    },
 
     // --- Profile ---
     avatar: {
@@ -91,10 +97,9 @@ const userSchema = new Schema(
       enum: Object.values(ACCOUNT_STATUS),
       default: ACCOUNT_STATUS.ACTIVE,
     },
-    verificationStatus: {
-      type: String,
-      enum: Object.values(VERIFICATION_STATUS),
-      default: VERIFICATION_STATUS.UNVERIFIED,
+    isStudentEmail: {
+      type: Boolean,
+      default: false,
       index: true,
     },
     refreshToken: { type: String },

@@ -1,5 +1,5 @@
 import mongoose, { Schema } from "mongoose";
-import { INSTITUTION_TYPES } from "../constants/index.js";
+import { INSTITUTION_TYPES, INSTITUTION_CATEGORY } from "../constants/index.js";
 
 const institutionSchema = new Schema(
   {
@@ -25,6 +25,14 @@ const institutionSchema = new Schema(
       default: INSTITUTION_TYPES.UNIVERSITY,
       required: true,
       index: true,
+    },
+
+    // ✅ NEW FIELD: Category (Public / Private)
+    category: {
+      type: String,
+      enum: Object.values(INSTITUTION_CATEGORY),
+      default: INSTITUTION_CATEGORY.PUBLIC, // ডিফল্ট পাবলিক রাখলাম
+      index: true, // ফিল্টারিং এর জন্য ইনডেক্স মাস্ট
     },
 
     validDomains: [

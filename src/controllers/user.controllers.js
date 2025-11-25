@@ -4,10 +4,8 @@ import { User } from "../models/user.model.js";
 import { uploadFile } from "../utils/fileUpload.js";
 import { ApiResponse } from "../utils/ApiResponse.js";
 import jwt from "jsonwebtoken";
-
-// ✅ Imports for Logic
 import { USER_TYPES } from "../constants/index.js";
-import { verifyStudentDomain } from "../services/academic.service.js";
+import { checkStudentEmail } from "../services/academic.service.js";
 
 // --- Utility: Token Generator ---
 const generateAccessAndRefreshTokens = async (userId) => {
@@ -21,6 +19,7 @@ const generateAccessAndRefreshTokens = async (userId) => {
 
     return { accessToken, refreshToken };
   } catch (error) {
+    console.error("JWT Generation Error:", error);
     throw new ApiError(
       500,
       "Something went wrong while generating referesh and access token"
@@ -34,22 +33,24 @@ const generateAccessAndRefreshTokens = async (userId) => {
 const registerUser = asyncHandler(async (req, res) => {
   const { fullName, email, password, nickName, userType } = req.body;
 
-  // 🔥 MANUAL CHECK (Double Security)
-  if ([USER_TYPES.ADMIN, USER_TYPES.OWNER].includes(userType)) {
-    throw new ApiError(403, "Nice try! Owner/Admin creation is restricted.");
-  }
-
-  const existedUser = await User.findOne({
-    $or: [{ email }, { nickName }],
-  });
-
+  // 1. Check user existence (Email check)
+  const existedUser = await User.findOne({ email });
   if (existedUser) {
-    throw new ApiError(409, "User with email or nickname already exists");
+    throw new ApiError(409, "User with this email already exists");
   }
 
+  // 🔥 MANUAL SECURITY CHECK
+  if ([USER_TYPES.ADMIN, USER_TYPES.OWNER].includes(userType)) {
+    throw new ApiError(403, "Restricted user type.");
+  }
+
+  // 2. ✅ Check if it is a Student Email
+  // সার্ভিস কল করে চেক করছি ডোমেইন ম্যাচ করে কিনা
+  const isStudentEmail = await checkStudentEmail(email);
+
+  // 3. File Upload Logic
   let avatarLocalPath = req.files?.avatar?.[0]?.path;
   let coverImageLocalPath = req.files?.coverImage?.[0]?.path;
-
   let avatar, coverImage;
 
   try {
@@ -59,14 +60,18 @@ const registerUser = asyncHandler(async (req, res) => {
     throw new ApiError(500, "Error uploading image files");
   }
 
+  // 4. Create User
   const user = await User.create({
     fullName,
     email,
     password,
     nickName: nickName || "",
     userType,
-    avatar: avatar?.url || "", // Future TODO: Save as Object {url, public_id}
+    avatar: avatar?.url || "",
     coverImage: coverImage?.url || "",
+
+    // ✅ NEW FIELD SETTING
+    isStudentEmail: isStudentEmail, // True or False based on service check
   });
 
   const createdUser = await User.findById(user._id).select(
@@ -254,60 +259,42 @@ const updateAcademicProfile = asyncHandler(async (req, res) => {
   const {
     institution,
     department,
-    // Student specific
     session,
     section,
-    studentId,
-    // Teacher specific
+    studentId, // Student
     teacherId,
     rank,
-    officeHours,
+    officeHours, // Teacher
   } = req.body;
 
-  // 1. Basic Validation
   if (!institution || !department) {
     throw new ApiError(400, "Institution and Department are required");
   }
 
-  // 2. Service Call: Check Domain Verification
-  const verificationStatus = await verifyStudentDomain(
-    req.user.email,
-    institution
-  );
+  // ⚠️ NOTE: এখানে আর Domain Verification চেক করছি না।
+  // কারণ isStudentEmail ফিল্ডটা রেজিস্ট্রেশনের সময় সেট হয়ে গেছে।
 
-  // 3. Logic Split based on User Type (To prevent Data Pollution)
-  let academicInfoPayload = {
-    department, // Common for both
-  };
-
+  let academicInfoPayload = { department };
   const currentUserType = req.user.userType;
 
   if (currentUserType === USER_TYPES.STUDENT) {
-    // 🎓 STUDENT LOGIC
-    if (!session) {
-      throw new ApiError(400, "Session is required for Students");
-    }
+    if (!session) throw new ApiError(400, "Session is required for Students");
     academicInfoPayload.session = session;
     academicInfoPayload.section = section;
     academicInfoPayload.studentId = studentId;
   } else if (currentUserType === USER_TYPES.TEACHER) {
-    // 👨‍🏫 TEACHER LOGIC (No Session)
     academicInfoPayload.teacherId = teacherId;
     academicInfoPayload.rank = rank;
     academicInfoPayload.officeHours = officeHours;
   }
 
-  // 4. Update User
   const user = await User.findByIdAndUpdate(
     req.user._id,
     {
       $set: {
         institution,
         academicInfo: academicInfoPayload,
-        // Status update logic
-        ...(verificationStatus === "VERIFIED" && {
-          verificationStatus: "VERIFIED",
-        }),
+        // isStudentEmail এ হাত দিচ্ছি না
       },
     },
     { new: true }
@@ -315,13 +302,7 @@ const updateAcademicProfile = asyncHandler(async (req, res) => {
 
   return res
     .status(200)
-    .json(
-      new ApiResponse(
-        200,
-        user,
-        `Academic profile updated as ${currentUserType}. Status: ${verificationStatus}`
-      )
-    );
+    .json(new ApiResponse(200, user, "Academic profile updated"));
 });
 
 // ==========================================
@@ -391,7 +372,6 @@ const updateAccountDetails = asyncHandler(async (req, res) => {
     socialLinks,
     skills,
     interests,
-    // New Fields
     phoneNumber,
     gender,
     religion,
@@ -412,14 +392,15 @@ const updateAccountDetails = asyncHandler(async (req, res) => {
     throw new ApiError(400, "At least one field is required to update");
   }
 
-  // 2. Nickname Check
-  if (nickName) {
-    const existingUser = await User.findOne({ nickName });
+  // 2. Phone Number Check
+  if (phoneNumber) {
+    const existingPhoneUser = await User.findOne({ phoneNumber });
+
     if (
-      existingUser &&
-      existingUser._id.toString() !== req.user._id.toString()
+      existingPhoneUser &&
+      existingPhoneUser._id.toString() !== req.user._id.toString()
     ) {
-      throw new ApiError(409, "Nickname already taken");
+      throw new ApiError(409, "Phone number already used by another account");
     }
   }
 
