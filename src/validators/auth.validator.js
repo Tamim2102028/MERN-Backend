@@ -21,7 +21,19 @@ const userRegisterSchema = Joi.object({
       "string.min": "Password must be at least 8 characters long",
     }),
 
-  nickName: Joi.string().trim().optional(),
+  userName: Joi.string()
+    .trim()
+    .min(3)
+    .max(30)
+    // ✅ NEW: Regular expression to allow only letters, numbers, and underscores
+    .pattern(new RegExp("^[a-zA-Z0-9_]+$"))
+    .required()
+    .messages({
+      "string.pattern.base":
+        "Username can only contain letters, numbers, and underscores.",
+      "string.min": "Username must be at least 3 characters long.",
+      "string.empty": "Username is required.",
+    }),
 
   // 🔥 CRITICAL SECURITY FIX 🔥
   // এখানে আমরা whitelist করে দিচ্ছি। এর বাইরে কিছু পাঠালেই Error খাবে।

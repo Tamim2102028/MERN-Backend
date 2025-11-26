@@ -1,55 +1,54 @@
 import { v2 as cloudinary } from "cloudinary";
 import fs from "fs";
 
-// কনফিগারেশন এখানেই থাক (আপাতত)
 cloudinary.config({
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
   api_key: process.env.CLOUDINARY_API_KEY,
   api_secret: process.env.CLOUDINARY_API_SECRET,
 });
 
-// ✅ ফাংশনের নাম জেনারেল রাখা হলো (uploadFile)
 const uploadFile = async (localFilePath) => {
   try {
     if (!localFilePath) return null;
 
-    // আপলোড হচ্ছে...
+    // 1. Upload to Cloudinary
     const response = await cloudinary.uploader.upload(localFilePath, {
       resource_type: "auto",
     });
 
-    // সফল হলে লোকাল ফাইল ডিলিট
+    // 2. File uploaded successfully, now remove local file
+    // (Sync ব্যবহার করছি কারণ এটা ব্লক করা জরুরি যাতে ক্লিনআপ নিশ্চিত হয়)
     try {
-      fs.unlinkSync(localFilePath);
-    } catch (error) {
-      console.error("Error removing local file:", error);
+      if (fs.existsSync(localFilePath)) {
+        fs.unlinkSync(localFilePath);
+      }
+    } catch (cleanupError) {
+      console.error("Error removing local file after upload:", cleanupError);
     }
 
     return response;
   } catch (error) {
-    // ব্যর্থ হলে লোকাল ফাইল ডিলিট
+    // 3. Upload Failed? Still try to remove local file
     try {
-      fs.unlinkSync(localFilePath);
-    } catch (removeError) {
-      console.error(
-        "Error removing local file after failed upload:",
-        removeError
-      );
+      if (fs.existsSync(localFilePath)) {
+        fs.unlinkSync(localFilePath);
+      }
+    } catch (cleanupError) {
+      console.error("Error removing local file after failure:", cleanupError);
     }
+
+    // null রিটার্ন করলে কন্ট্রোলার বুঝবে আপলোড হয়নি
     return null;
   }
 };
 
-// ✅ ফাংশনের নাম জেনারেল রাখা হলো (deleteFile)
+// Delete from Cloudinary (Unchanged but ensuring null check)
 const deleteFile = async (fileId) => {
   try {
     if (!fileId) return null;
-
-    // Cloudinary তে পাবলিক আইডি দিয়ে ডিলিট করা হয়
-    const result = await cloudinary.uploader.destroy(fileId);
-    return result;
+    return await cloudinary.uploader.destroy(fileId);
   } catch (error) {
-    console.error("Error deleting file:", error);
+    console.error("Error deleting file from cloudinary:", error);
     return null;
   }
 };

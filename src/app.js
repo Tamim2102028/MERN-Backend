@@ -18,6 +18,9 @@ app.use(cookieParser());
 
 // Import and use routes
 import userRouter from "./routes/user.routes.js";
+import { errorHandler } from "./middlewares/error.middleware.js";
 app.use("/api/v1/users", userRouter);
 
+// ⚠️ সবার শেষে এটা বসাতে হবে
+app.use(errorHandler);
 export default app;

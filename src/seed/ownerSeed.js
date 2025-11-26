@@ -10,7 +10,7 @@ const seedOwner = async () => {
   try {
     await connectDB();
 
-    // চেক করি অলরেডি ওনার আছে কিনা
+    // Check if owner already exists
     const ownerExists = await User.findOne({ userType: USER_TYPES.OWNER });
 
     if (ownerExists) {
@@ -18,14 +18,13 @@ const seedOwner = async () => {
       process.exit(0);
     }
 
-    // ওনার তৈরি করা
+    // Create owner account
     await User.create({
       fullName: "System Owner",
-      email: process.env.OWNER_EMAIL, // .env ফাইলে আপনার মেইল রাখবেন
-      password: process.env.OWNER_PASSWORD, // .env ফাইলে পাসওয়ার্ড রাখবেন
+      email: process.env.OWNER_EMAIL,
+      password: process.env.OWNER_PASSWORD,
       userType: USER_TYPES.OWNER,
-      nickName: "TheBoss",
-      // বাকি ফিল্ডগুলো মডেলের ডিফল্ট ভ্যালু নিয়ে নেবে
+      userName: "owner", // ⚠️ UPDATED from nickName
     });
 
     console.log("✅ Owner Account Created Successfully!");
@@ -38,4 +37,4 @@ const seedOwner = async () => {
 
 seedOwner();
 
-// node src/seed/owner.seed.js
+// To run: node src/seed/ownerSeed.js

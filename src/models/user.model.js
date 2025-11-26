@@ -23,7 +23,14 @@ const userSchema = new Schema(
       trim: true,
     },
     password: { type: String, required: [true, "Password is required"] },
-    nickName: { type: String, trim: true, index: true },
+    userName: {
+      type: String,
+      required: true,
+      unique: true,
+      lowercase: true,
+      trim: true,
+      index: true,
+    },
     phoneNumber: {
       type: String,
       trim: true,
@@ -36,10 +43,12 @@ const userSchema = new Schema(
     // --- Profile ---
     avatar: {
       type: String,
-      default:
-        "https://res.cloudinary.com/demo/image/upload/v1/default_avatar.png",
+      default: "https://api.dicebear.com/6.x/bottts/svg?seed=tamim",
     },
-    coverImage: { type: String },
+    coverImage: {
+      type: String,
+      default: "https://api.dicebear.com/6.x/bottts/svg?seed=coverimage",
+    },
     bio: { type: String, trim: true, maxLength: 300 },
 
     gender: { type: String, enum: Object.values(GENDERS) },
@@ -149,9 +158,9 @@ userSchema.methods.generateAccessToken = function () {
     {
       _id: this._id,
       email: this.email,
+      userName: this.userName, // nickName এর বদলে userName
       userType: this.userType,
       institution: this.institution || null,
-      nickName: this.nickName,
     },
     process.env.ACCESS_TOKEN_SECRET,
     { expiresIn: process.env.ACCESS_TOKEN_EXPIRY }

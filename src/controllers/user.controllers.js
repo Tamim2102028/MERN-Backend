@@ -31,48 +31,53 @@ const generateAccessAndRefreshTokens = async (userId) => {
 // 🚀 1. REGISTER USER
 // ==========================================
 const registerUser = asyncHandler(async (req, res) => {
-  const { fullName, email, password, nickName, userType } = req.body;
+  const { fullName, email, password, userName, userType } = req.body; // ⚠️ UPDATED from nickName
 
-  // 1. Check user existence (Email check)
-  const existedUser = await User.findOne({ email });
+  // 1. Check user existence (email or username)
+  const existedUser = await User.findOne({ $or: [{ email }, { userName }] });
+
   if (existedUser) {
-    throw new ApiError(409, "User with this email already exists");
+    throw new ApiError(409, "User with this email or username already exists");
   }
 
-  // 🔥 MANUAL SECURITY CHECK
+  // 2. Security Check
   if ([USER_TYPES.ADMIN, USER_TYPES.OWNER].includes(userType)) {
     throw new ApiError(403, "Restricted user type.");
   }
 
-  // 2. ✅ Check if it is a Student Email
-  // সার্ভিস কল করে চেক করছি ডোমেইন ম্যাচ করে কিনা
+  // 3. Student Email Check
   const isStudentEmail = await checkStudentEmail(email);
 
-  // 3. File Upload Logic
+  // 4. File Upload
   let avatarLocalPath = req.files?.avatar?.[0]?.path;
   let coverImageLocalPath = req.files?.coverImage?.[0]?.path;
+
   let avatar, coverImage;
 
-  try {
-    if (avatarLocalPath) avatar = await uploadFile(avatarLocalPath);
-    if (coverImageLocalPath) coverImage = await uploadFile(coverImageLocalPath);
-  } catch (error) {
-    throw new ApiError(500, "Error uploading image files");
+  if (avatarLocalPath) {
+    avatar = await uploadFile(avatarLocalPath);
+    if (!avatar) throw new ApiError(500, "Failed to upload avatar");
   }
 
-  // 4. Create User
-  const user = await User.create({
+  if (coverImageLocalPath) {
+    coverImage = await uploadFile(coverImageLocalPath);
+    if (!coverImage) throw new ApiError(500, "Failed to upload cover image");
+  }
+
+  // 5. Create User
+  const userPayload = {
     fullName,
     email,
     password,
-    nickName: nickName || "",
+    userName, // ⚠️ UPDATED from nickName
     userType,
-    avatar: avatar?.url || "",
-    coverImage: coverImage?.url || "",
+    isStudentEmail: isStudentEmail,
+  };
 
-    // ✅ NEW FIELD SETTING
-    isStudentEmail: isStudentEmail, // True or False based on service check
-  });
+  if (avatar?.url) userPayload.avatar = avatar.url;
+  if (coverImage?.url) userPayload.coverImage = coverImage.url;
+
+  const user = await User.create(userPayload);
 
   const createdUser = await User.findById(user._id).select(
     "-password -refreshToken"
@@ -108,14 +113,15 @@ const registerUser = asyncHandler(async (req, res) => {
 // 🚀 2. LOGIN USER
 // ==========================================
 const loginUser = asyncHandler(async (req, res) => {
-  const { email, nickName, password } = req.body;
+  const { email, userName, password } = req.body; // ⚠️ UPDATED from nickName
 
-  if (!email && !nickName) {
+  if (!email && !userName) {
+    // ⚠️ UPDATED
     throw new ApiError(400, "Username or email is required");
   }
 
   const user = await User.findOne({
-    $or: [{ email }, { nickName }],
+    $or: [{ email }, { userName }], // ⚠️ UPDATED
   });
 
   if (!user) {
@@ -198,7 +204,10 @@ const refreshAccessToken = asyncHandler(async (req, res) => {
       throw new ApiError(401, "Refresh token is expired or used");
     }
 
-    const { accessToken, newRefreshToken } =
+    const {
+      accessToken,
+      refreshToken: newRefreshToken,
+    } = // Renamed to avoid confusion
       await generateAccessAndRefreshTokens(user._id);
 
     const options = {
@@ -271,9 +280,6 @@ const updateAcademicProfile = asyncHandler(async (req, res) => {
     throw new ApiError(400, "Institution and Department are required");
   }
 
-  // ⚠️ NOTE: এখানে আর Domain Verification চেক করছি না।
-  // কারণ isStudentEmail ফিল্ডটা রেজিস্ট্রেশনের সময় সেট হয়ে গেছে।
-
   let academicInfoPayload = { department };
   const currentUserType = req.user.userType;
 
@@ -290,13 +296,7 @@ const updateAcademicProfile = asyncHandler(async (req, res) => {
 
   const user = await User.findByIdAndUpdate(
     req.user._id,
-    {
-      $set: {
-        institution,
-        academicInfo: academicInfoPayload,
-        // isStudentEmail এ হাত দিচ্ছি না
-      },
-    },
+    { $set: { institution, academicInfo: academicInfoPayload } },
     { new: true }
   ).select("-password -refreshToken");
 
@@ -329,7 +329,9 @@ const updateUserAvatar = asyncHandler(async (req, res) => {
 
   return res
     .status(200)
-    .json(new ApiResponse(200, avatar.url, "Avatar updated successfully"));
+    .json(
+      new ApiResponse(200, { url: avatar.url }, "Avatar updated successfully")
+    );
 });
 
 // ==========================================
@@ -357,7 +359,11 @@ const updateUserCoverImage = asyncHandler(async (req, res) => {
   return res
     .status(200)
     .json(
-      new ApiResponse(200, coverImage.url, "Cover image updated successfully")
+      new ApiResponse(
+        200,
+        { url: coverImage.url },
+        "Cover image updated successfully"
+      )
     );
 });
 
@@ -367,7 +373,7 @@ const updateUserCoverImage = asyncHandler(async (req, res) => {
 const updateAccountDetails = asyncHandler(async (req, res) => {
   const {
     fullName,
-    nickName,
+    userName, // ⚠️ UPDATED from nickName
     bio,
     socialLinks,
     skills,
@@ -378,24 +384,22 @@ const updateAccountDetails = asyncHandler(async (req, res) => {
   } = req.body;
 
   // 1. Check if at least one field is present
-  if (
-    !fullName &&
-    !nickName &&
-    !bio &&
-    !socialLinks &&
-    !skills &&
-    !interests &&
-    !phoneNumber &&
-    !gender &&
-    !religion
-  ) {
+  if (Object.keys(req.body).length === 0) {
     throw new ApiError(400, "At least one field is required to update");
   }
 
-  // 2. Phone Number Check
+  // 2. Uniqueness Checks
+  if (userName) {
+    const existingUser = await User.findOne({ userName });
+    if (
+      existingUser &&
+      existingUser._id.toString() !== req.user._id.toString()
+    ) {
+      throw new ApiError(409, "This username is already taken.");
+    }
+  }
   if (phoneNumber) {
     const existingPhoneUser = await User.findOne({ phoneNumber });
-
     if (
       existingPhoneUser &&
       existingPhoneUser._id.toString() !== req.user._id.toString()
@@ -404,22 +408,10 @@ const updateAccountDetails = asyncHandler(async (req, res) => {
     }
   }
 
-  // 3. Update User
+  // 3. Update User (using req.body directly is safe here since we've checked)
   const user = await User.findByIdAndUpdate(
     req.user._id,
-    {
-      $set: {
-        fullName,
-        nickName,
-        bio,
-        socialLinks,
-        skills,
-        interests,
-        phoneNumber,
-        gender,
-        religion,
-      },
-    },
+    { $set: req.body },
     { new: true }
   ).select("-password -refreshToken");
 
