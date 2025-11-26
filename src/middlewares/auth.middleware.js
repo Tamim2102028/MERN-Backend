@@ -1,41 +1,35 @@
-import { User } from "../models/user.model.js"; // ✅ Named Import
-import { ApiError } from "../utils/ApiError.js"; // ✅ Named Import
-import { asyncHandler } from "../utils/asyncHandler.js"; // ✅ Named Import
+import { User } from "../models/user.model.js";
+import { ApiError } from "../utils/ApiError.js";
+import { asyncHandler } from "../utils/asyncHandler.js";
 import jwt from "jsonwebtoken";
 
 const verifyJWT = asyncHandler(async (req, _, next) => {
   try {
-    // 1. Token খুঁজে বের করা (Cookie অথবা Header থেকে)
     const token =
       req.cookies?.accessToken ||
       req.header("Authorization")?.replace("Bearer ", "");
 
     if (!token) {
-      throw new ApiError(401, "Unauthorized request");
+      throw new ApiError(401, "Unauthorized request. Token not found.");
     }
 
-    // 2. Token Verify করা
     const decodedToken = jwt.verify(token, process.env.ACCESS_TOKEN_SECRET);
 
-    // 3. User খুঁজে বের করা
-    // ⚠️ ফিক্স: আমাদের মডেলে payload হিসেবে '_id' দেওয়া আছে, 'userId' নয়।
+    // ✅ সঠিক এবং নিরাপদ কুয়েরি
     const user = await User.findById(decodedToken?._id).select(
       "-password -refreshToken"
     );
 
     if (!user) {
-      throw new ApiError(401, "Invalid Access Token");
+      throw new ApiError(401, "Invalid Access Token. User does not exist.");
     }
 
-    // ✅ NEW SECURITY CHECK:
-    // চেক করি পাসওয়ার্ড পরিবর্তনের পর টোকেনটি ইস্যু হয়েছে কিনা।
+    // পাসওয়ার্ড পরিবর্তনের নিরাপত্তা চেক
     if (user.passwordChangedAt) {
       const changedTimestamp = parseInt(
         user.passwordChangedAt.getTime() / 1000,
         10
       );
-
-      // decodedToken.iat হলো টোকেনটি কখন তৈরি হয়েছিল তার সময় (in seconds)
       if (changedTimestamp > decodedToken.iat) {
         throw new ApiError(
           401,
@@ -44,11 +38,14 @@ const verifyJWT = asyncHandler(async (req, _, next) => {
       }
     }
 
-    // 4. req.user সেট করা
+    // এখন req.user এ পাসওয়ার্ড বা রিফ্রেশ টোকেন থাকবে না
     req.user = user;
     next();
   } catch (error) {
-    throw new ApiError(401, error?.message || "Invalid access token");
+    if (error instanceof ApiError) {
+      throw error;
+    }
+    throw new ApiError(401, "Invalid or expired access token.");
   }
 });
 

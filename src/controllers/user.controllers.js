@@ -235,48 +235,37 @@ const refreshAccessToken = asyncHandler(async (req, res) => {
 });
 
 // ==========================================
-// 🚀 5. CHANGE PASSWORD (FINAL & COMPLETE VERSION)
+// 🚀 5. CHANGE PASSWORD (পূর্বের সরল লজিকে ফিরিয়ে আনা হলো)
 // ==========================================
 const changeCurrentPassword = asyncHandler(async (req, res) => {
   const { oldPassword, newPassword } = req.body;
 
-  // 1. Get user from database (We are not using req.user to get the full document)
+  // ১. ডাটাবেস থেকে ইউজারকে খুঁজে বের করা
   const user = await User.findById(req.user._id);
+
+  // ২. পুরনো পাসওয়ার্ড সঠিক কিনা তা যাচাই করা
   const isPasswordCorrect = await user.isPasswordCorrect(oldPassword);
 
   if (!isPasswordCorrect) {
     throw new ApiError(400, "Invalid old password");
   }
 
-  // 2. Update password and timestamp
+  // ৩. নতুন পাসওয়ার্ড সেট করা
   user.password = newPassword;
-  user.passwordChangedAt = Date.now() - 1000; // 1 second buffer
+
+  // ৪. পুরনো টোকেন বাতিল করার জন্য passwordChangedAt সময় সেট করা (নিরাপত্তার জন্য এটি থাকবে)
+  user.passwordChangedAt = Date.now();
+
+  // ৫. ইউজারের ডকুমেন্ট সেভ করা
   await user.save({ validateBeforeSave: false });
 
-  // ✅ CORE FIX: Generate new tokens immediately after password change
-  // পাসওয়ার্ড পরিবর্তনের পর ইউজারকে নতুন টোকেন দিচ্ছি যাতে সে লগড ইন থাকে।
-  const { accessToken, refreshToken } = await generateAccessAndRefreshTokens(
-    user._id
-  );
-
-  const options = {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-  };
-
-  // 3. Send back the new tokens
+  // ৬. একটি সাধারণ সফল বার্তা পাঠানো। কোনো নতুন টোকেন ইস্যু করা হবে না।
+  // ইউজারকে নতুন পাসওয়ার্ড দিয়ে আবার লগইন করতে হবে।
   return res
     .status(200)
-    .cookie("accessToken", accessToken, options)
-    .cookie("refreshToken", refreshToken, options)
-    .json(
-      new ApiResponse(
-        200,
-        { accessToken, refreshToken },
-        "Password changed successfully. New tokens issued."
-      )
-    );
+    .json(new ApiResponse(200, {}, "Password changed successfully."));
 });
+
 // ==========================================
 // 🚀 6. GET CURRENT USER (Me)
 // ==========================================
