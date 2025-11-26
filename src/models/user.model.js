@@ -23,6 +23,7 @@ const userSchema = new Schema(
       trim: true,
     },
     password: { type: String, required: [true, "Password is required"] },
+    passwordChangedAt: { type: Date },
     userName: {
       type: String,
       required: true,

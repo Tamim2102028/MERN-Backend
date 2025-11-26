@@ -1,29 +1,33 @@
 import { Institution } from "../models/institution.model.js";
 
 /**
- * সার্ভিস: চেক করে ইমেইলটি কোনো স্টুডেন্ট/ইন্সটিটিউশন ইমেইল কিনা।
+ * সার্ভিস: ইমেইল ডোমেইন ব্যবহার করে ডাটাবেস থেকে সংশ্লিষ্ট প্রতিষ্ঠান খুঁজে বের করে।
  * @param {String} email - ইউজারের ইমেইল (e.g. student@buet.ac.bd)
- * @returns {Boolean} true if valid domain found, else false
+ * @returns {Promise<Object|null>} - প্রতিষ্ঠান পাওয়া গেলে তার ডকুমেন্ট, না পেলে null.
  */
-export const checkStudentEmail = async (email) => {
+
+export const findInstitutionByEmailDomain = async (email) => {
   try {
     if (!email || !email.includes("@")) {
-      return false;
+      return null;
     }
 
-    // ১. ইমেইল থেকে ডোমেইন বের করা (abc@buet.ac.bd -> buet.ac.bd)
+    // 1. Extract domain from email
     const domain = email.split("@")[1].toLowerCase();
 
-    // ২. ডাটাবেসে চেক করা কোনো ইনস্টিটিউশনের validDomains এ এই ডোমেইন আছে কিনা
-    // findOne ব্যবহার করছি কারণ একটা পেলেই আমাদের চলবে।
+    // 2. Find the institution that has this domain in its validDomains array
+    // We are returning the full document now, not just a boolean.
     const institution = await Institution.findOne({
       validDomains: domain,
-    }).select("_id"); // শুধু আইডি আনলেই হবে, পুরো অবজেক্ট দরকার নেই
+    });
 
-    // ৩. যদি ইনস্টিটিউশন পাওয়া যায়, তার মানে এটা স্টুডেন্ট মেইল
-    return !!institution; // Found = true, Not Found = false
+    // 3. Return the found institution object or null
+    return institution;
   } catch (error) {
-    console.error("Service Error (checkStudentEmail):", error.message);
-    return false; // সেফ সাইড
+    console.error(
+      "Service Error (findInstitutionByEmailDomain):",
+      error.message
+    );
+    return null; // Return null in case of error for safety
   }
 };

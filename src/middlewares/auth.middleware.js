@@ -27,6 +27,23 @@ const verifyJWT = asyncHandler(async (req, _, next) => {
       throw new ApiError(401, "Invalid Access Token");
     }
 
+    // ✅ NEW SECURITY CHECK:
+    // চেক করি পাসওয়ার্ড পরিবর্তনের পর টোকেনটি ইস্যু হয়েছে কিনা।
+    if (user.passwordChangedAt) {
+      const changedTimestamp = parseInt(
+        user.passwordChangedAt.getTime() / 1000,
+        10
+      );
+
+      // decodedToken.iat হলো টোকেনটি কখন তৈরি হয়েছিল তার সময় (in seconds)
+      if (changedTimestamp > decodedToken.iat) {
+        throw new ApiError(
+          401,
+          "User recently changed password. Please log in again."
+        );
+      }
+    }
+
     // 4. req.user সেট করা
     req.user = user;
     next();

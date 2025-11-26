@@ -5,7 +5,7 @@ import { uploadFile } from "../utils/fileUpload.js";
 import { ApiResponse } from "../utils/ApiResponse.js";
 import jwt from "jsonwebtoken";
 import { USER_TYPES } from "../constants/index.js";
-import { checkStudentEmail } from "../services/academic.service.js";
+import { findInstitutionByEmailDomain } from "../services/academic.service.js";
 
 // --- Utility: Token Generator ---
 const generateAccessAndRefreshTokens = async (userId) => {
@@ -28,57 +28,60 @@ const generateAccessAndRefreshTokens = async (userId) => {
 };
 
 // ==========================================
-// 🚀 1. REGISTER USER
+// 🚀 1. REGISTER USER (AUTO-INSTITUTION LINKING LOGIC ADDED)
 // ==========================================
 const registerUser = asyncHandler(async (req, res) => {
-  const { fullName, email, password, userName, userType } = req.body; // ⚠️ UPDATED from nickName
+  const { fullName, email, password, userName, userType } = req.body;
 
-  // 1. Check user existence (email or username)
   const existedUser = await User.findOne({ $or: [{ email }, { userName }] });
-
   if (existedUser) {
     throw new ApiError(409, "User with this email or username already exists");
   }
 
-  // 2. Security Check
   if ([USER_TYPES.ADMIN, USER_TYPES.OWNER].includes(userType)) {
     throw new ApiError(403, "Restricted user type.");
   }
 
-  // 3. Student Email Check
-  const isStudentEmail = await checkStudentEmail(email);
+  // ✅ CORE LOGIC UPDATE STARTS HERE
+  // 3. Check for institution using email domain
+  const institution = await findInstitutionByEmailDomain(email);
 
-  // 4. File Upload
-  let avatarLocalPath = req.files?.avatar?.[0]?.path;
-  let coverImageLocalPath = req.files?.coverImage?.[0]?.path;
-
+  // 4. File Upload Logic (remains same)
+  const avatarLocalPath = req.files?.avatar?.[0]?.path;
+  const coverImageLocalPath = req.files?.coverImage?.[0]?.path;
   let avatar, coverImage;
-
   if (avatarLocalPath) {
     avatar = await uploadFile(avatarLocalPath);
     if (!avatar) throw new ApiError(500, "Failed to upload avatar");
   }
-
   if (coverImageLocalPath) {
     coverImage = await uploadFile(coverImageLocalPath);
     if (!coverImage) throw new ApiError(500, "Failed to upload cover image");
   }
 
-  // 5. Create User
+  // 5. Create User Payload with conditional institution linking
   const userPayload = {
     fullName,
     email,
     password,
-    userName, // ⚠️ UPDATED from nickName
+    userName,
     userType,
-    isStudentEmail: isStudentEmail,
+    // Default values
+    isStudentEmail: false,
   };
 
   if (avatar?.url) userPayload.avatar = avatar.url;
   if (coverImage?.url) userPayload.coverImage = coverImage.url;
 
-  const user = await User.create(userPayload);
+  // If an institution was found, link it to the user
+  if (institution) {
+    userPayload.isStudentEmail = true;
+    userPayload.institution = institution._id; // The magic link!
+    userPayload.institutionType = institution.type; // Bonus: also set the type
+  }
+  // ✅ CORE LOGIC UPDATE ENDS HERE
 
+  const user = await User.create(userPayload);
   const createdUser = await User.findById(user._id).select(
     "-password -refreshToken"
   );
@@ -87,10 +90,10 @@ const registerUser = asyncHandler(async (req, res) => {
     throw new ApiError(500, "Something went wrong while registering the user");
   }
 
+  // Token generation and response (remains same)
   const { accessToken, refreshToken } = await generateAccessAndRefreshTokens(
     user._id
   );
-
   const options = {
     httpOnly: true,
     secure: process.env.NODE_ENV === "production",
@@ -232,11 +235,12 @@ const refreshAccessToken = asyncHandler(async (req, res) => {
 });
 
 // ==========================================
-// 🚀 5. CHANGE PASSWORD
+// 🚀 5. CHANGE PASSWORD (FINAL & COMPLETE VERSION)
 // ==========================================
 const changeCurrentPassword = asyncHandler(async (req, res) => {
   const { oldPassword, newPassword } = req.body;
 
+  // 1. Get user from database (We are not using req.user to get the full document)
   const user = await User.findById(req.user._id);
   const isPasswordCorrect = await user.isPasswordCorrect(oldPassword);
 
@@ -244,14 +248,35 @@ const changeCurrentPassword = asyncHandler(async (req, res) => {
     throw new ApiError(400, "Invalid old password");
   }
 
+  // 2. Update password and timestamp
   user.password = newPassword;
+  user.passwordChangedAt = Date.now() - 1000; // 1 second buffer
   await user.save({ validateBeforeSave: false });
 
+  // ✅ CORE FIX: Generate new tokens immediately after password change
+  // পাসওয়ার্ড পরিবর্তনের পর ইউজারকে নতুন টোকেন দিচ্ছি যাতে সে লগড ইন থাকে।
+  const { accessToken, refreshToken } = await generateAccessAndRefreshTokens(
+    user._id
+  );
+
+  const options = {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+  };
+
+  // 3. Send back the new tokens
   return res
     .status(200)
-    .json(new ApiResponse(200, {}, "Password changed successfully"));
+    .cookie("accessToken", accessToken, options)
+    .cookie("refreshToken", refreshToken, options)
+    .json(
+      new ApiResponse(
+        200,
+        { accessToken, refreshToken },
+        "Password changed successfully. New tokens issued."
+      )
+    );
 });
-
 // ==========================================
 // 🚀 6. GET CURRENT USER (Me)
 // ==========================================
@@ -371,33 +396,21 @@ const updateUserCoverImage = asyncHandler(async (req, res) => {
 // 🚀 10. UPDATE GENERAL ACCOUNT DETAILS
 // ==========================================
 const updateAccountDetails = asyncHandler(async (req, res) => {
-  const {
-    fullName,
-    userName, // ⚠️ UPDATED from nickName
-    bio,
-    socialLinks,
-    skills,
-    interests,
-    phoneNumber,
-    gender,
-    religion,
-  } = req.body;
+  // ✅ NEW: Prevent username change
+  // ফাংশনের শুরুতেই আমরা চেক করছি ইউজার `userName` পাঠিয়েছে কিনা।
+  // যদি পাঠিয়ে থাকে, তাহলে আমরা একটি এরর দিয়ে দেব।
+  if (req.body.userName) {
+    throw new ApiError(400, "Username cannot be changed.");
+  }
+
+  const { phoneNumber } = req.body;
 
   // 1. Check if at least one field is present
   if (Object.keys(req.body).length === 0) {
     throw new ApiError(400, "At least one field is required to update");
   }
 
-  // 2. Uniqueness Checks
-  if (userName) {
-    const existingUser = await User.findOne({ userName });
-    if (
-      existingUser &&
-      existingUser._id.toString() !== req.user._id.toString()
-    ) {
-      throw new ApiError(409, "This username is already taken.");
-    }
-  }
+  // 2. Uniqueness Check for other fields (like phone number)
   if (phoneNumber) {
     const existingPhoneUser = await User.findOne({ phoneNumber });
     if (
@@ -408,7 +421,8 @@ const updateAccountDetails = asyncHandler(async (req, res) => {
     }
   }
 
-  // 3. Update User (using req.body directly is safe here since we've checked)
+  // 3. Update User
+  // যেহেতু আমরা আগেই userName চেক করে নিয়েছি, তাই এখন req.body ব্যবহার করা নিরাপদ।
   const user = await User.findByIdAndUpdate(
     req.user._id,
     { $set: req.body },
