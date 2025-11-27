@@ -1,0 +1,267 @@
+import mongoose from "mongoose";
+import { Friendship } from "../models/friendship.model.js";
+import { User } from "../models/user.model.js";
+import { ApiError } from "../utils/ApiError.js";
+import {
+  FRIENDSHIP_STATUS,
+  FRIEND_REQUEST_POLICY,
+} from "../constants/index.js";
+
+// ==========================================
+// 1. SEND FRIEND REQUEST (With Privacy & Logic)
+// ==========================================
+export const sendFriendRequestService = async (requesterId, recipientId) => {
+  if (requesterId.toString() === recipientId.toString()) {
+    throw new ApiError(400, "You cannot send a friend request to yourself.");
+  }
+
+  // A. টার্গেট ইউজার এবং তার প্রাইভেসি সেটিংস চেক করা
+  const recipient = await User.findById(recipientId).select("privacySettings");
+  if (!recipient) {
+    throw new ApiError(404, "User not found.");
+  }
+
+  // 🔥 Privacy Check: সে কি রিকোয়েস্ট এলাউ করে?
+  if (
+    recipient.privacySettings?.friendRequestPolicy ===
+    FRIEND_REQUEST_POLICY.NOBODY
+  ) {
+    throw new ApiError(403, "This user does not accept friend requests.");
+  }
+
+  // B. এক্সিস্টিং রিলেশন চেক করা
+  const existingRelation = await Friendship.findOne({
+    $or: [
+      { requester: requesterId, recipient: recipientId },
+      { requester: recipientId, recipient: requesterId },
+    ],
+  });
+
+  if (existingRelation) {
+    // ১. যদি অলরেডি ফ্রেন্ড হয়
+    if (existingRelation.status === FRIENDSHIP_STATUS.ACCEPTED) {
+      throw new ApiError(400, "You are already friends.");
+    }
+    // ২. যদি ব্লকড থাকে
+    if (existingRelation.status === FRIENDSHIP_STATUS.BLOCKED) {
+      throw new ApiError(
+        403,
+        "You cannot send a request due to privacy/block settings."
+      );
+    }
+    // ৩. যদি আমি অলরেডি পাঠিয়ে থাকি
+    if (existingRelation.requester.toString() === requesterId.toString()) {
+      throw new ApiError(400, "Friend request already sent.");
+    }
+
+    // 🔥 ৪. AUTO ACCEPT LOGIC (Reverse Request)
+    // যদি সে আমাকে আগেই পাঠিয়ে থাকে (Pending), তাহলে এখন আমি পাঠালে সেটা অটোমেটিক Accept হবে
+    if (existingRelation.recipient.toString() === requesterId.toString()) {
+      existingRelation.status = FRIENDSHIP_STATUS.ACCEPTED;
+      await existingRelation.save(); // Hook will update connectionsCount
+      return {
+        status: FRIENDSHIP_STATUS.ACCEPTED,
+        message: "Friend request accepted automatically!",
+      };
+    }
+  }
+
+  // C. সব ঠিক থাকলে নতুন রিকোয়েস্ট তৈরি
+  const newRequest = await Friendship.create({
+    requester: requesterId,
+    recipient: recipientId,
+    status: FRIENDSHIP_STATUS.PENDING,
+  });
+
+  return { status: FRIENDSHIP_STATUS.PENDING, data: newRequest };
+};
+
+// ==========================================
+// 2. ACCEPT FRIEND REQUEST
+// ==========================================
+export const acceptFriendRequestService = async (userId, requestId) => {
+  // রিকোয়েস্ট টি খুঁজছি এবং চেক করছি recipient আমি কিনা
+  const request = await Friendship.findOne({
+    _id: requestId,
+    recipient: userId,
+    status: FRIENDSHIP_STATUS.PENDING,
+  });
+
+  if (!request) {
+    throw new ApiError(404, "Friend request not found or already processed.");
+  }
+
+  request.status = FRIENDSHIP_STATUS.ACCEPTED;
+  await request.save(); // Hook will update connectionsCount for both users
+
+  return request;
+};
+
+// ==========================================
+// 3. REJECT / CANCEL REQUEST (Delete)
+// ==========================================
+export const deleteRequestService = async (userId, requestId) => {
+  // লজিক:
+  // - আমি যদি Recipient হই -> REJECT
+  // - আমি যদি Requester হই -> CANCEL
+
+  const request = await Friendship.findOneAndDelete({
+    _id: requestId,
+    $or: [{ requester: userId }, { recipient: userId }],
+    status: FRIENDSHIP_STATUS.PENDING, // শুধু পেন্ডিং ডিলিট করা যাবে
+  });
+
+  if (!request) {
+    throw new ApiError(404, "Request not found.");
+  }
+
+  return { success: true };
+};
+
+// ==========================================
+// 4. UNFRIEND (Breaking Up)
+// ==========================================
+export const unfriendUserService = async (userId, friendId) => {
+  const friendship = await Friendship.findOneAndDelete({
+    $or: [
+      { requester: userId, recipient: friendId },
+      { requester: friendId, recipient: userId },
+    ],
+    status: FRIENDSHIP_STATUS.ACCEPTED,
+  });
+
+  if (!friendship) {
+    throw new ApiError(404, "Friendship not found.");
+  }
+
+  // Hook অটোমেটিক connectionsCount কমিয়ে দেবে
+  return { success: true };
+};
+
+// ==========================================
+// 5. BLOCK USER
+// ==========================================
+export const blockUserService = async (userId, targetId) => {
+  if (userId.toString() === targetId.toString()) {
+    throw new ApiError(400, "You cannot block yourself.");
+  }
+
+  // ১. আগে কোনো রিলেশন আছে কিনা দেখি
+  let friendship = await Friendship.findOne({
+    $or: [
+      { requester: userId, recipient: targetId },
+      { requester: targetId, recipient: userId },
+    ],
+  });
+
+  // ২. যদি তারা ফ্রেন্ড থাকে, তবে ব্লকিং এর আগে কাউন্ট কমাতে হবে
+  // (কারণ আমরা স্ট্যাটাস আপডেট করছি, ডিলিট করছি না। ডিলিট হুক ট্রিগার হবে না)
+  if (friendship && friendship.status === FRIENDSHIP_STATUS.ACCEPTED) {
+    await User.findByIdAndUpdate(userId, { $inc: { connectionsCount: -1 } });
+    await User.findByIdAndUpdate(targetId, { $inc: { connectionsCount: -1 } });
+  }
+
+  if (friendship) {
+    // রিলেশন থাকলে আপডেট করে ব্লক করে দিচ্ছি
+    friendship.status = FRIENDSHIP_STATUS.BLOCKED;
+    friendship.blockedBy = userId; // কে ব্লক দিল
+    await friendship.save();
+  } else {
+    // রিলেশন না থাকলে নতুন ব্লক এন্ট্রি তৈরি করছি
+    await Friendship.create({
+      requester: userId,
+      recipient: targetId,
+      status: FRIENDSHIP_STATUS.BLOCKED,
+      blockedBy: userId,
+    });
+  }
+
+  return { success: true };
+};
+
+// ==========================================
+// 6. UNBLOCK USER
+// ==========================================
+export const unblockUserService = async (userId, targetId) => {
+  const friendship = await Friendship.findOneAndDelete({
+    $or: [
+      { requester: userId, recipient: targetId },
+      { requester: targetId, recipient: userId },
+    ],
+    status: FRIENDSHIP_STATUS.BLOCKED,
+    blockedBy: userId, // আমি ব্লক দিলেই কেবল আমি আনব্লক করতে পারব
+  });
+
+  if (!friendship) {
+    throw new ApiError(
+      404,
+      "Block entry not found or you didn't block this user."
+    );
+  }
+
+  return { success: true };
+};
+
+// ==========================================
+// 7. GET LISTS (Incoming / Sent / Friends)
+// ==========================================
+export const getFriendshipListService = async (userId, type, page, limit) => {
+  const skip = (page - 1) * limit;
+  let query = {};
+  let populateField = "";
+
+  if (type === "INCOMING") {
+    // আমাকে কে পাঠিয়েছে (Pending)
+    query = { recipient: userId, status: FRIENDSHIP_STATUS.PENDING };
+    populateField = "requester";
+  } else if (type === "SENT") {
+    // আমি কাকে পাঠিয়েছি (Pending)
+    query = { requester: userId, status: FRIENDSHIP_STATUS.PENDING };
+    populateField = "recipient";
+  } else if (type === "FRIENDS") {
+    // আমার বন্ধু কারা (Accepted)
+    query = {
+      $or: [{ requester: userId }, { recipient: userId }],
+      status: FRIENDSHIP_STATUS.ACCEPTED,
+    };
+    // এখানে পপুলেট ডাইনামিক করতে হবে (যে আমি না, সে-ই বন্ধু)
+    // এটা সার্ভিসে করা জটিল, তাই আমরা কন্ট্রোলারে বা এখানে লুপ চালিয়ে ম্যাপ করতে পারি।
+    // অথবা Mongoose Virtuals ইউজ করতে পারি। আপাতত সিম্পল পপুলেট করছি।
+  } else if (type === "BLOCKED") {
+    query = {
+      $or: [{ requester: userId }, { recipient: userId }],
+      status: FRIENDSHIP_STATUS.BLOCKED,
+      blockedBy: userId,
+    };
+  }
+
+  let data = await Friendship.find(query)
+    .sort({ updatedAt: -1 })
+    .skip(skip)
+    .limit(limit)
+    .populate("requester", "fullName userName avatar")
+    .populate("recipient", "fullName userName avatar")
+    .lean();
+
+  // ফ্রেন্ডলিস্টের জন্য ডাটা ক্লিন করা (যাতে শুধু বন্ধুর প্রোফাইল থাকে)
+  if (type === "FRIENDS") {
+    data = data.map((f) => ({
+      _id: f._id, // Friendship ID (Unfriend করার জন্য লাগবে)
+      friend:
+        f.requester._id.toString() === userId.toString()
+          ? f.recipient
+          : f.requester,
+      since: f.updatedAt,
+    }));
+  } else if (type === "BLOCKED") {
+    data = data.map((f) => ({
+      _id: f._id,
+      blockedUser:
+        f.requester._id.toString() === userId.toString()
+          ? f.recipient
+          : f.requester,
+    }));
+  }
+
+  return data;
+};

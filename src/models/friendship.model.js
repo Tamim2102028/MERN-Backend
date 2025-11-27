@@ -22,6 +22,11 @@ const friendshipSchema = new Schema(
       default: FRIENDSHIP_STATUS.PENDING,
       index: true,
     },
+    blockedBy: {
+      type: Schema.Types.ObjectId,
+      ref: "User",
+      default: null,
+    },
   },
   { timestamps: true }
 );

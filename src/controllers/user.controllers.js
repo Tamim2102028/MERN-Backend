@@ -1,11 +1,24 @@
+import jwt from "jsonwebtoken";
 import { asyncHandler } from "../utils/asyncHandler.js";
 import { ApiError } from "../utils/ApiError.js";
-import { User } from "../models/user.model.js";
-import { Follow } from "../models/follow.model.js"; // ✅ Import
-import { uploadFile } from "../utils/fileUpload.js";
 import { ApiResponse } from "../utils/ApiResponse.js";
-import { findAcademicInfoByEmail } from "../services/academic.service.js"; // ✅ Import
-import { USER_TYPES, FOLLOW_TARGET_MODELS } from "../constants/index.js"; // ✅ Import
+import { uploadFile } from "../utils/fileUpload.js";
+
+// Models
+import { User } from "../models/user.model.js";
+import { Follow } from "../models/follow.model.js"; // ✅ Auto-follow এর জন্য
+import { Friendship } from "../models/friendship.model.js"; // ✅ Profile Relation চেক করার জন্য
+
+// Services
+import { findAcademicInfoByEmail } from "../services/academic.service.js"; // ✅ Domain Matching এর জন্য
+
+// Constants
+import {
+  USER_TYPES,
+  FOLLOW_TARGET_MODELS,
+  FRIENDSHIP_STATUS,
+  PROFILE_RELATION_STATUS,
+} from "../constants/index.js";
 
 // --- Utility: Token Generator ---
 const generateAccessAndRefreshTokens = async (userId) => {
@@ -504,6 +517,84 @@ const updateAccountDetails = asyncHandler(async (req, res) => {
     .json(new ApiResponse(200, user, "Account details updated successfully"));
 });
 
+// ==========================================
+// 🚀 11. GET USER PROFILE (With Friendship Status)
+// ==========================================
+const getUserProfile = asyncHandler(async (req, res) => {
+  const { username } = req.params;
+  const viewerId = req.user._id;
+
+  // ১. ইউজার খোঁজা
+  const user = await User.findOne({ userName: username }).select(
+    "-password -refreshToken"
+  );
+
+  if (!user) {
+    throw new ApiError(404, "User not found");
+  }
+
+  // ২. নিজের প্রোফাইল হলে
+  if (user._id.toString() === viewerId.toString()) {
+    return res.status(200).json(
+      new ApiResponse(
+        200,
+        {
+          ...user.toObject(),
+          friendshipStatus: PROFILE_RELATION_STATUS.SELF,
+        },
+        "My profile fetched"
+      )
+    );
+  }
+
+  // ৩. ফ্রেন্ডশিপ স্ট্যাটাস চেক
+  const relationship = await Friendship.findOne({
+    $or: [
+      { requester: viewerId, recipient: user._id },
+      { requester: user._id, recipient: viewerId },
+    ],
+  });
+
+  let friendshipStatus = PROFILE_RELATION_STATUS.NONE; // ডিফল্ট
+
+  if (relationship) {
+    // A. ব্লকিং চেক
+    if (relationship.status === FRIENDSHIP_STATUS.BLOCKED) {
+      // সে আমাকে ব্লক করলে -> User Not Found
+      if (relationship.blockedBy.toString() === user._id.toString()) {
+        throw new ApiError(404, "User not found");
+      }
+      // আমি ব্লক করলে -> BLOCKED স্ট্যাটাস
+      if (relationship.blockedBy.toString() === viewerId.toString()) {
+        friendshipStatus = PROFILE_RELATION_STATUS.BLOCKED;
+      }
+    }
+    // B. ফ্রেন্ড হলে
+    else if (relationship.status === FRIENDSHIP_STATUS.ACCEPTED) {
+      friendshipStatus = PROFILE_RELATION_STATUS.FRIENDS;
+    }
+    // C. পেন্ডিং থাকলে
+    else if (relationship.status === FRIENDSHIP_STATUS.PENDING) {
+      if (relationship.requester.toString() === viewerId.toString()) {
+        friendshipStatus = PROFILE_RELATION_STATUS.REQUEST_SENT; // আমি পাঠিয়েছি
+      } else {
+        friendshipStatus = PROFILE_RELATION_STATUS.REQUEST_RECEIVED; // সে পাঠিয়েছে
+      }
+    }
+  }
+
+  // ৪. রেসপন্স
+  return res
+    .status(200)
+    .json(
+      new ApiResponse(
+        200,
+        { ...user.toObject(), friendshipStatus },
+        "User profile fetched successfully"
+      )
+    );
+});
+
 export {
   registerUser,
   loginUser,
@@ -515,4 +606,5 @@ export {
   updateUserAvatar,
   updateUserCoverImage,
   updateAccountDetails,
+  getUserProfile,
 };

@@ -9,6 +9,8 @@ import {
   GENDERS,
   RELIGIONS,
   ACCOUNT_STATUS,
+  FRIEND_REQUEST_POLICY,
+  CONNECTION_VISIBILITY,
 } from "../constants/index.js";
 
 const userSchema = new Schema(
@@ -106,6 +108,21 @@ const userSchema = new Schema(
       type: String,
       enum: Object.values(ACCOUNT_STATUS),
       default: ACCOUNT_STATUS.ACTIVE,
+    },
+    privacySettings: {
+      // ১. আমাকে কে রিকোয়েস্ট দিতে পারবে?
+      friendRequestPolicy: {
+        type: String,
+        enum: Object.values(FRIEND_REQUEST_POLICY),
+        default: FRIEND_REQUEST_POLICY.EVERYONE,
+      },
+
+      // ✅ ২. আমার ফ্রেন্ডলিস্ট কে দেখতে পারবে? (New)
+      connectionVisibility: {
+        type: String,
+        enum: Object.values(CONNECTION_VISIBILITY), // PUBLIC, CONNECTIONS, ONLY_ME
+        default: CONNECTION_VISIBILITY.PUBLIC, // ডিফল্ট সবাই দেখবে
+      },
     },
     isStudentEmail: {
       type: Boolean,

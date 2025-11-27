@@ -10,6 +10,7 @@ import {
   updateAcademicProfile, // একাডেমিক তথ্য (Auto Chat Trigger) আপডেট
   updateUserAvatar,
   updateUserCoverImage, // (যদি কন্ট্রোলার বানিয়ে থাকেন, না বানালে কমেন্ট করে রাখবেন)
+  getUserProfile,
 } from "../controllers/user.controllers.js";
 
 // Middlewares
@@ -85,5 +86,8 @@ router.patch(
   uploadImage.single("coverImage"),
   updateUserCoverImage
 );
+
+// Route (Secure Route)
+router.get("/p/:username", verifyJWT, getUserProfile);
 
 export default router;
