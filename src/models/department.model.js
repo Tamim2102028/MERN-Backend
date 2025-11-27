@@ -9,6 +9,14 @@ const departmentSchema = new Schema(
     // ২. কোড: শর্ট ফর্ম (e.g. "CSE") - ইউজারদের চিনতে সুবিধা হবে
     code: { type: String, required: true, uppercase: true, trim: true },
 
+    validDomains: [
+      {
+        type: String,
+        lowercase: true,
+        trim: true,
+      },
+    ],
+
     institution: {
       type: Schema.Types.ObjectId,
       ref: "Institution",

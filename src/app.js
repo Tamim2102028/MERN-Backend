@@ -18,9 +18,14 @@ app.use(cookieParser());
 
 // Import and use routes
 import userRouter from "./routes/user.routes.js";
-import { errorHandler } from "./middlewares/error.middleware.js";
+import postRouter from "./routes/post.routes.js";
+import commentRouter from "./routes/comment.routes.js";
 app.use("/api/v1/users", userRouter);
+app.use("/api/v1/posts", postRouter);
+app.use("/api/v1/comments", commentRouter);
 
 // ⚠️ সবার শেষে এটা বসাতে হবে
+import { errorHandler } from "./middlewares/error.middleware.js";
 app.use(errorHandler);
+
 export default app;

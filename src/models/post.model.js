@@ -9,18 +9,22 @@ import {
 const postSchema = new Schema(
   {
     content: { type: String, trim: true },
+
+    // ✅ শুধুমাত্র ইমেজ সাপোর্ট (MVP)
     attachments: [
       {
         type: {
           type: String,
           enum: Object.values(ATTACHMENT_TYPES),
-          required: true,
+          default: ATTACHMENT_TYPES.IMAGE,
         },
         url: { type: String, required: true },
+        // Future proofing fields (Optional)
         name: { type: String },
         size: { type: Number },
       },
     ],
+
     type: {
       type: String,
       enum: Object.values(POST_TYPES),
@@ -29,7 +33,7 @@ const postSchema = new Schema(
       index: true,
     },
 
-    // Context
+    // --- Context ---
     postOnId: {
       type: Schema.Types.ObjectId,
       required: true,
@@ -40,7 +44,7 @@ const postSchema = new Schema(
       type: String,
       required: true,
       enum: Object.values(POST_TARGET_MODELS),
-      default: POST_TARGET_MODELS.GROUP,
+      default: POST_TARGET_MODELS.USER,
     },
 
     author: {
@@ -49,6 +53,14 @@ const postSchema = new Schema(
       required: true,
       index: true,
     },
+
+    // --- Share Feature ---
+    sharedPost: {
+      type: Schema.Types.ObjectId,
+      ref: "Post",
+      default: null,
+    },
+
     visibility: {
       type: String,
       enum: Object.values(POST_VISIBILITY),
@@ -56,6 +68,7 @@ const postSchema = new Schema(
       index: true,
     },
 
+    // Polls (Optional - Future)
     pollOptions: [
       {
         text: { type: String },
@@ -63,9 +76,9 @@ const postSchema = new Schema(
         voters: [{ type: Schema.Types.ObjectId, ref: "User" }],
       },
     ],
+
     tags: [{ type: String, trim: true }],
 
-    // ✅ Stats (Updated: Removed viewsCount)
     likesCount: { type: Number, default: 0 },
     commentsCount: { type: Number, default: 0 },
     sharesCount: { type: Number, default: 0 },
@@ -78,5 +91,6 @@ const postSchema = new Schema(
 
 postSchema.index({ postOnId: 1, postOnModel: 1, createdAt: -1 });
 postSchema.index({ author: 1, createdAt: -1 });
+postSchema.index({ sharedPost: 1 });
 
 export const Post = mongoose.model("Post", postSchema);

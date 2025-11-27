@@ -1,11 +1,11 @@
 import { asyncHandler } from "../utils/asyncHandler.js";
 import { ApiError } from "../utils/ApiError.js";
 import { User } from "../models/user.model.js";
+import { Follow } from "../models/follow.model.js"; // ✅ Import
 import { uploadFile } from "../utils/fileUpload.js";
 import { ApiResponse } from "../utils/ApiResponse.js";
-import jwt from "jsonwebtoken";
-import { USER_TYPES } from "../constants/index.js";
-import { findInstitutionByEmailDomain } from "../services/academic.service.js";
+import { findAcademicInfoByEmail } from "../services/academic.service.js"; // ✅ Import
+import { USER_TYPES, FOLLOW_TARGET_MODELS } from "../constants/index.js"; // ✅ Import
 
 // --- Utility: Token Generator ---
 const generateAccessAndRefreshTokens = async (userId) => {
@@ -42,55 +42,86 @@ const registerUser = asyncHandler(async (req, res) => {
     throw new ApiError(403, "Restricted user type.");
   }
 
-  // ✅ CORE LOGIC UPDATE STARTS HERE
-  // 3. Check for institution using email domain
-  const institution = await findInstitutionByEmailDomain(email);
+  // ✅ ১. ডোমেইন থেকে ভার্সিটি ও ডিপার্টমেন্ট বের করা
+  const { institution, department } = await findAcademicInfoByEmail(email);
 
-  // 4. File Upload Logic (remains same)
+  // ফাইল আপলোড হ্যান্ডলিং
   const avatarLocalPath = req.files?.avatar?.[0]?.path;
   const coverImageLocalPath = req.files?.coverImage?.[0]?.path;
-  let avatar, coverImage;
+
+  let avatarUrl = "";
+  let coverImageUrl = "";
+
   if (avatarLocalPath) {
-    avatar = await uploadFile(avatarLocalPath);
-    if (!avatar) throw new ApiError(500, "Failed to upload avatar");
+    const avatar = await uploadFile(avatarLocalPath);
+    if (avatar) avatarUrl = avatar.url;
   }
   if (coverImageLocalPath) {
-    coverImage = await uploadFile(coverImageLocalPath);
-    if (!coverImage) throw new ApiError(500, "Failed to upload cover image");
+    const cover = await uploadFile(coverImageLocalPath);
+    if (cover) coverImageUrl = cover.url;
   }
 
-  // 5. Create User Payload with conditional institution linking
+  // ইউজার অবজেক্ট তৈরি
   const userPayload = {
     fullName,
     email,
     password,
     userName,
     userType,
-    // Default values
     isStudentEmail: false,
+    academicInfo: {},
   };
 
-  if (avatar?.url) userPayload.avatar = avatar.url;
-  if (coverImage?.url) userPayload.coverImage = coverImage.url;
+  if (avatarUrl) userPayload.avatar = avatarUrl;
+  if (coverImageUrl) userPayload.coverImage = coverImageUrl;
 
-  // If an institution was found, link it to the user
+  // ✅ ২. অটো-লিংকিং লজিক
   if (institution) {
     userPayload.isStudentEmail = true;
-    userPayload.institution = institution._id; // The magic link!
-    userPayload.institutionType = institution.type; // Bonus: also set the type
+    userPayload.institution = institution._id;
+    userPayload.institutionType = institution.type;
   }
-  // ✅ CORE LOGIC UPDATE ENDS HERE
+
+  if (department) {
+    userPayload.academicInfo.department = department._id;
+  }
 
   const user = await User.create(userPayload);
   const createdUser = await User.findById(user._id).select(
     "-password -refreshToken"
   );
 
-  if (!createdUser) {
-    throw new ApiError(500, "Something went wrong while registering the user");
+  // ✅ ৩. অটো-ফলো লজিক (রেজিস্ট্রেশনের সময়)
+  const followPromises = [];
+
+  if (institution) {
+    followPromises.push(
+      Follow.create({
+        follower: user._id,
+        followingId: institution._id,
+        followingModel: FOLLOW_TARGET_MODELS.INSTITUTION,
+      })
+    );
   }
 
-  // Token generation and response (remains same)
+  if (department) {
+    followPromises.push(
+      Follow.create({
+        follower: user._id,
+        followingId: department._id,
+        followingModel: FOLLOW_TARGET_MODELS.DEPARTMENT,
+      })
+    );
+  }
+
+  if (followPromises.length > 0) {
+    try {
+      await Promise.all(followPromises);
+    } catch (err) {
+      console.error("Auto-follow error:", err.message);
+    }
+  }
+
   const { accessToken, refreshToken } = await generateAccessAndRefreshTokens(
     user._id
   );
@@ -107,7 +138,7 @@ const registerUser = asyncHandler(async (req, res) => {
       new ApiResponse(
         200,
         { user: createdUser, accessToken, refreshToken },
-        "User registered Successfully"
+        "User registered successfully"
       )
     );
 });
@@ -284,35 +315,85 @@ const updateAcademicProfile = asyncHandler(async (req, res) => {
     department,
     session,
     section,
-    studentId, // Student
+    studentId,
     teacherId,
     rank,
-    officeHours, // Teacher
+    officeHours,
   } = req.body;
 
-  if (!institution || !department) {
-    throw new ApiError(400, "Institution and Department are required");
+  // ✅ ১. ইমিউটেবিলিটি চেক (ভেরিফাইড হলে চেঞ্জ করা যাবে না)
+  if (req.user.isStudentEmail) {
+    if (institution || department) {
+      throw new ApiError(
+        403,
+        "Verified accounts cannot change Institution or Department."
+      );
+    }
   }
 
-  let academicInfoPayload = { department };
-  const currentUserType = req.user.userType;
+  let updateData = {};
 
-  if (currentUserType === USER_TYPES.STUDENT) {
-    if (!session) throw new ApiError(400, "Session is required for Students");
-    academicInfoPayload.session = session;
-    academicInfoPayload.section = section;
-    academicInfoPayload.studentId = studentId;
-  } else if (currentUserType === USER_TYPES.TEACHER) {
-    academicInfoPayload.teacherId = teacherId;
-    academicInfoPayload.rank = rank;
-    academicInfoPayload.officeHours = officeHours;
+  // অন্যান্য একাডেমিক তথ্য আপডেট
+  if (session) updateData["academicInfo.session"] = session;
+  if (section) updateData["academicInfo.section"] = section;
+  if (studentId) updateData["academicInfo.studentId"] = studentId;
+
+  if (teacherId) updateData["academicInfo.teacherId"] = teacherId;
+  if (rank) updateData["academicInfo.rank"] = rank;
+  if (officeHours) updateData["academicInfo.officeHours"] = officeHours;
+
+  // ✅ ২. যদি ভেরিফাইড না হয়, তবেই ভার্সিটি আপডেট হবে
+  if (!req.user.isStudentEmail) {
+    if (institution) updateData.institution = institution;
+    if (department) updateData["academicInfo.department"] = department;
   }
 
   const user = await User.findByIdAndUpdate(
     req.user._id,
-    { $set: { institution, academicInfo: academicInfoPayload } },
+    { $set: updateData },
     { new: true }
   ).select("-password -refreshToken");
+
+  // ✅ ৩. অটো-ফলো লজিক (ম্যানুয়াল আপডেটের ক্ষেত্রে)
+  if (!req.user.isStudentEmail && (institution || department)) {
+    const followUpdates = [];
+
+    if (institution) {
+      followUpdates.push(
+        Follow.findOneAndUpdate(
+          {
+            follower: req.user._id,
+            followingId: institution,
+            followingModel: FOLLOW_TARGET_MODELS.INSTITUTION,
+          },
+          { $setOnInsert: { createdAt: new Date() } },
+          { upsert: true, new: true }
+        )
+      );
+    }
+
+    if (department) {
+      followUpdates.push(
+        Follow.findOneAndUpdate(
+          {
+            follower: req.user._id,
+            followingId: department,
+            followingModel: FOLLOW_TARGET_MODELS.DEPARTMENT,
+          },
+          { $setOnInsert: { createdAt: new Date() } },
+          { upsert: true, new: true }
+        )
+      );
+    }
+
+    if (followUpdates.length > 0) {
+      try {
+        await Promise.all(followUpdates);
+      } catch (err) {
+        console.error("Auto-follow update error:", err.message);
+      }
+    }
+  }
 
   return res
     .status(200)
