@@ -6,6 +6,8 @@ import {
   FRIENDSHIP_STATUS,
   FRIEND_REQUEST_POLICY,
 } from "../constants/index.js";
+import { createNotification } from "./notification.service.js"; // ✅ ADDED
+import { NOTIFICATION_TYPES } from "../constants/index.js"; // ✅ ADDED
 
 // ==========================================
 // 1. SEND FRIEND REQUEST (With Privacy & Logic)
@@ -59,6 +61,17 @@ export const sendFriendRequestService = async (requesterId, recipientId) => {
     if (existingRelation.recipient.toString() === requesterId.toString()) {
       existingRelation.status = FRIENDSHIP_STATUS.ACCEPTED;
       await existingRelation.save(); // Hook will update connectionsCount
+
+      // 🔥 NOTIFICATION (Auto Accept)
+      createNotification({
+        recipient: existingRelation.requester, // যে আগে রিকোয়েস্ট দিয়েছিল
+        actor: requesterId,
+        type: NOTIFICATION_TYPES.FRIEND_ACCEPT,
+        relatedId: requesterId,
+        relatedModel: "User",
+        message: "accepted your friend request.",
+      }).catch(console.error);
+
       return {
         status: FRIENDSHIP_STATUS.ACCEPTED,
         message: "Friend request accepted automatically!",
@@ -73,6 +86,16 @@ export const sendFriendRequestService = async (requesterId, recipientId) => {
     status: FRIENDSHIP_STATUS.PENDING,
   });
 
+  // 🔥 NOTIFICATION (New Request)
+  createNotification({
+    recipient: recipientId,
+    actor: requesterId,
+    type: NOTIFICATION_TYPES.FRIEND_REQUEST,
+    relatedId: requesterId, // ক্লিক করলে ইউজারের প্রোফাইল খুলবে
+    relatedModel: "User",
+    message: "sent you a friend request.",
+  }).catch(console.error);
+
   return { status: FRIENDSHIP_STATUS.PENDING, data: newRequest };
 };
 
@@ -80,7 +103,6 @@ export const sendFriendRequestService = async (requesterId, recipientId) => {
 // 2. ACCEPT FRIEND REQUEST
 // ==========================================
 export const acceptFriendRequestService = async (userId, requestId) => {
-  // রিকোয়েস্ট টি খুঁজছি এবং চেক করছি recipient আমি কিনা
   const request = await Friendship.findOne({
     _id: requestId,
     recipient: userId,
@@ -92,7 +114,17 @@ export const acceptFriendRequestService = async (userId, requestId) => {
   }
 
   request.status = FRIENDSHIP_STATUS.ACCEPTED;
-  await request.save(); // Hook will update connectionsCount for both users
+  await request.save();
+
+  // 🔥 NOTIFICATION (Accept)
+  createNotification({
+    recipient: request.requester, // যে রিকোয়েস্ট পাঠিয়েছিল
+    actor: userId, // আমি (যে এক্সেপ্ট করলাম)
+    type: NOTIFICATION_TYPES.FRIEND_ACCEPT,
+    relatedId: userId,
+    relatedModel: "User",
+    message: "accepted your friend request.",
+  }).catch(console.error);
 
   return request;
 };

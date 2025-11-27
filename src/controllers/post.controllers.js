@@ -15,6 +15,8 @@ import {
   POST_VISIBILITY,
   FRIENDSHIP_STATUS,
 } from "../constants/index.js";
+import { createNotification } from "../services/notification.service.js"; // ✅ ADDED
+import { NOTIFICATION_TYPES } from "../constants/index.js"; // ✅ ADDED
 
 // ==========================================
 // 🚀 1. CREATE POST
@@ -59,16 +61,30 @@ export const togglePostLike = asyncHandler(async (req, res) => {
   });
 
   if (existingReaction) {
+    // Unlike Logic
     await Reaction.findByIdAndDelete(existingReaction._id);
     return res
       .status(200)
       .json(new ApiResponse(200, { isLiked: false }, "Unliked successfully"));
   } else {
+    // Like Logic
     await Reaction.create({
       targetId: postId,
       targetModel: REACTION_TARGET_MODELS.POST,
       user: userId,
     });
+
+    // 🔥 NOTIFICATION TRIGGER (Fire & Forget)
+    // আমরা await দিচ্ছি না যাতে রেসপন্স ফাস্ট হয়, তবে এরর হ্যান্ডলিংয়ের জন্য catch ব্লক রাখা ভালো
+    createNotification({
+      recipient: post.author, // পোস্টের মালিক পাবে
+      actor: userId, // যে লাইক দিল
+      type: NOTIFICATION_TYPES.LIKE,
+      relatedId: post._id,
+      relatedModel: "Post",
+      message: "liked your post.",
+    }).catch((err) => console.error("Notification Error:", err.message));
+
     return res
       .status(200)
       .json(new ApiResponse(200, { isLiked: true }, "Liked successfully"));

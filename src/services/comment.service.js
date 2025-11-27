@@ -1,6 +1,8 @@
 import { Comment } from "../models/comment.model.js";
 import { Post } from "../models/post.model.js";
 import { ApiError } from "../utils/ApiError.js";
+import { createNotification } from "./notification.service.js"; // ✅ ADDED
+import { NOTIFICATION_TYPES } from "../constants/index.js"; // ✅ ADDED
 
 // --- ADD COMMENT ---
 export const addCommentService = async (userId, postId, bodyData) => {
@@ -8,20 +10,13 @@ export const addCommentService = async (userId, postId, bodyData) => {
 
   // ১. পোস্ট চেক
   const post = await Post.findById(postId);
-  if (!post) {
-    throw new ApiError(404, "Post not found");
-  }
+  if (!post) throw new ApiError(404, "Post not found");
 
-  // ২. প্যারেন্ট কমেন্ট চেক (যদি রিপ্লাই হয়)
+  // ২. প্যারেন্ট কমেন্ট চেক
+  let parentComment = null;
   if (parentId) {
-    const parentComment = await Comment.findById(parentId);
-    if (!parentComment) {
-      throw new ApiError(404, "Parent comment not found");
-    }
-    // অপশনাল: চেক করা যায় প্যারেন্ট কমেন্টটি কি একই পোস্টের কিনা
-    if (parentComment.post.toString() !== postId) {
-      throw new ApiError(400, "Parent comment belongs to a different post");
-    }
+    parentComment = await Comment.findById(parentId);
+    if (!parentComment) throw new ApiError(404, "Parent comment not found");
   }
 
   // ৩. কমেন্ট তৈরি
@@ -31,6 +26,35 @@ export const addCommentService = async (userId, postId, bodyData) => {
     author: userId,
     parentId: parentId || null,
   });
+
+  // 🔥 NOTIFICATION TRIGGER START 🔥
+
+  // Case A: যদি এটা রিপ্লাই হয় -> প্যারেন্ট কমেন্টারকে জানাও
+  if (parentId && parentComment) {
+    createNotification({
+      recipient: parentComment.author,
+      actor: userId,
+      type: NOTIFICATION_TYPES.REPLY,
+      relatedId: postId, // ক্লিক করলে পোস্টে যাবে
+      relatedModel: "Post",
+      message: "replied to your comment.",
+    }).catch((err) => console.error("Notif Error:", err));
+  }
+
+  // Case B: পোস্টের মালিককে জানাও (যদি সে নিজে কমেন্ট না করে থাকে)
+  // (নিজের পোস্টে নিজে রিপ্লাই দিলেও নোটিফিকেশন পাওয়ার দরকার নেই)
+  if (post.author.toString() !== userId.toString()) {
+    createNotification({
+      recipient: post.author,
+      actor: userId,
+      type: NOTIFICATION_TYPES.COMMENT,
+      relatedId: postId,
+      relatedModel: "Post",
+      message: "commented on your post.",
+    }).catch((err) => console.error("Notif Error:", err));
+  }
+
+  // 🔥 NOTIFICATION TRIGGER END 🔥
 
   return comment;
 };
