@@ -3,6 +3,7 @@ import { Friendship } from "../models/friendship.model.js";
 import { Follow } from "../models/follow.model.js";
 import { GroupMembership } from "../models/groupMembership.model.js";
 import { RoomMembership } from "../models/roomMembership.model.js";
+import { Group } from "../models/group.model.js";
 import { Reaction } from "../models/reaction.model.js"; // ✅ ADDED
 import { uploadFile } from "../utils/fileUpload.js";
 import { ApiError } from "../utils/ApiError.js";
@@ -11,13 +12,55 @@ import {
   POST_VISIBILITY,
   POST_TARGET_MODELS,
   REACTION_TARGET_MODELS, // ✅ ADDED
+  GROUP_MEMBERSHIP_STATUS,
+  GROUP_ROLES,
 } from "../constants/index.js";
 
 // ================================================================
 // 1. CREATE POST SERVICE
 // ================================================================
 export const createPostService = async (currentUser, postData, localFiles) => {
-  const { content } = postData;
+  const { content, postOnModel, postOnId } = postData;
+
+  // --- 🔥 GROUP SECURITY CHECK START ---
+  if (postOnModel === POST_TARGET_MODELS.GROUP) {
+    // ১. গ্রুপটি আদৌ আছে কিনা?
+    const group = await Group.findById(postOnId);
+    if (!group) throw new ApiError(404, "Group not found");
+
+    // ২. মেম্বারশিপ চেক
+    const membership = await GroupMembership.findOne({
+      group: postOnId,
+      user: currentUser._id,
+    });
+
+    if (!membership) {
+      throw new ApiError(403, "You must be a member to post in this group.");
+    }
+
+    // ৩. ব্যান চেক
+    if (membership.status === GROUP_MEMBERSHIP_STATUS.BANNED) {
+      throw new ApiError(403, "You are banned from posting in this group.");
+    }
+
+    // ৪. পেন্ডিং মেম্বার চেক
+    if (membership.status === GROUP_MEMBERSHIP_STATUS.PENDING) {
+      throw new ApiError(403, "Your join request is still pending.");
+    }
+
+    // ৫. পারমিশন সেটিংস চেক (Only Admin Posting)
+    if (
+      !group.settings.allowMemberPosting &&
+      membership.role === GROUP_ROLES.MEMBER
+    ) {
+      throw new ApiError(403, "Only Admins allows posting in this group.");
+    }
+
+    // ৬. (Optional) Post Approval Logic
+    // যদি group.settings.requirePostApproval = true হয়, তাহলে পোস্টের স্ট্যাটাস 'PENDING' করতে হবে।
+    // আপাতত আমরা পোস্ট মডেলে 'isApproved' ফিল্ড রাখিনি, তাই এটা ফিউচারে হবে।
+  }
+  // --- GROUP SECURITY CHECK END ---
 
   if (
     (!content || content.trim() === "") &&

@@ -11,6 +11,8 @@ import {
   getNewsFeed,
   togglePostLike,
   getUserFeed,
+  getSinglePost, // ✅ ADDED
+  deletePost, // ✅ ADDED
 } from "../controllers/post.controllers.js";
 
 const router = Router();
@@ -28,6 +30,10 @@ router
 // লাইক টগল (Toggle)
 router.post("/:postId/like", togglePostLike);
 // অন্য ইউজারের পোস্ট দেখা (Profile Timeline)
-router.get("/user/:username", getUserFeed); // Example: /api/v1/posts/user/tamim
+router.get("/user/:username", getUserFeed);
+router
+  .route("/:postId")
+  .get(getSinglePost) // নোটিফিকেশন থেকে এখানে আসবে
+  .delete(deletePost); // পোস্ট ডিলিট করতে
 
 export default router;
