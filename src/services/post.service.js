@@ -14,6 +14,7 @@ import {
   REACTION_TARGET_MODELS, // ✅ ADDED
   GROUP_MEMBERSHIP_STATUS,
   GROUP_ROLES,
+  GROUP_PRIVACY,
 } from "../constants/index.js";
 
 // ================================================================
@@ -185,4 +186,89 @@ export const getNewsFeedService = async (userId, page, limit) => {
   }));
 
   return enrichedPosts;
+};
+
+// ================================================================
+// 3. GET SPECIFIC TARGET FEED (Group / Room / Page Feed)
+// ================================================================
+export const getTargetFeedService = async (
+  userId,
+  targetModel,
+  targetId,
+  page,
+  limit
+) => {
+  const skip = (page - 1) * limit;
+
+  // 🛡️ SECURITY & PRIVACY CHECK 🛡️
+
+  // A. ROOM (Classroom) -> Must be a member
+  if (targetModel === POST_TARGET_MODELS.ROOM) {
+    const isMember = await RoomMembership.findOne({
+      room: targetId,
+      user: userId,
+    });
+    if (!isMember) {
+      throw new ApiError(
+        403,
+        "Access Denied. You are not a member of this Classroom."
+      );
+    }
+  }
+
+  // B. GROUP -> Check Privacy
+  else if (targetModel === POST_TARGET_MODELS.GROUP) {
+    const group = await Group.findById(targetId).select("privacy");
+    if (!group) throw new ApiError(404, "Group not found.");
+
+    // প্রাইভেট গ্রুপ হলে মেম্বারশিপ চেক বাধ্যতামূলক
+    if (group.privacy === GROUP_PRIVACY.PRIVATE) {
+      const isMember = await GroupMembership.findOne({
+        group: targetId,
+        user: userId,
+        status: GROUP_MEMBERSHIP_STATUS.JOINED,
+      });
+      if (!isMember) {
+        throw new ApiError(403, "This is a Private Group. Join to view posts.");
+      }
+    }
+    // পাবলিক গ্রুপ হলে সবাই দেখতে পারবে (No Check Needed)
+  }
+
+  // C. INSTITUTION / DEPARTMENT -> (Usually Public, No Check Needed for MVP)
+
+  // 🔍 FETCH POSTS
+  const posts = await Post.find({
+    postOnModel: targetModel, // e.g. "Group"
+    postOnId: targetId, // e.g. GroupId
+    isArchived: false,
+  })
+    .sort({ isPinned: -1, createdAt: -1 }) // পিন পোস্ট আগে, তারপর লেটেস্ট
+    .skip(skip)
+    .limit(limit)
+    .populate("author", "fullName userName avatar")
+    .populate("postOnId", "name title")
+    .populate({
+      path: "sharedPost",
+      populate: { path: "author", select: "fullName userName avatar" },
+    })
+    .lean();
+
+  // ❤️ CALCULATE: isLikedByMe
+  if (posts.length > 0) {
+    const postIds = posts.map((p) => p._id);
+    const myReactions = await Reaction.find({
+      user: userId,
+      targetModel: REACTION_TARGET_MODELS.POST,
+      targetId: { $in: postIds },
+    }).select("targetId");
+
+    const likedPostIds = new Set(myReactions.map((r) => r.targetId.toString()));
+
+    posts.forEach((post) => {
+      post.isLikedByMe = likedPostIds.has(post._id.toString());
+    });
+  }
+
+  return posts;
 };

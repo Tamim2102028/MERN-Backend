@@ -13,6 +13,7 @@ import {
   getUserFeed,
   getSinglePost, // ✅ ADDED
   deletePost, // ✅ ADDED
+  getTargetFeed,
 } from "../controllers/post.controllers.js";
 
 const router = Router();
@@ -35,5 +36,7 @@ router
   .route("/:postId")
   .get(getSinglePost) // নোটিফিকেশন থেকে এখানে আসবে
   .delete(deletePost); // পোস্ট ডিলিট করতে
+
+router.get("/target/:targetModel/:targetId", getTargetFeed);
 
 export default router;

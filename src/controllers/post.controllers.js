@@ -16,6 +16,7 @@ import { RoomMembership } from "../models/roomMembership.model.js"; // ক্ল
 import {
   createPostService,
   getNewsFeedService,
+  getTargetFeedService,
 } from "../services/post.service.js";
 
 // --- Constants ---
@@ -25,6 +26,7 @@ import {
   FRIENDSHIP_STATUS,
   POST_TARGET_MODELS,
   GROUP_MEMBERSHIP_STATUS,
+  RESOURCE_ROLES,
 } from "../constants/index.js";
 
 // ==========================================
@@ -275,7 +277,7 @@ export const getSinglePost = asyncHandler(async (req, res) => {
 });
 
 // ==========================================
-// 🚀 6. DELETE POST
+// 🚀 6. DELETE POST (Updated with Room/Group Admin Power)
 // ==========================================
 export const deletePost = asyncHandler(async (req, res) => {
   const { postId } = req.params;
@@ -284,14 +286,81 @@ export const deletePost = asyncHandler(async (req, res) => {
   const post = await Post.findById(postId);
   if (!post) throw new ApiError(404, "Post not found");
 
-  // শুধুমাত্র অথর পোস্ট ডিলিট করতে পারবে (ফিউচারে গ্রুপ এডমিনও পারবে)
-  if (post.author.toString() !== userId.toString()) {
-    throw new ApiError(403, "You are not authorized to delete this post");
+  // ১. মালিক হলে ডিলিট
+  if (post.author.toString() === userId.toString()) {
+    await Post.findByIdAndDelete(postId);
+    return res
+      .status(200)
+      .json(new ApiResponse(200, {}, "Post deleted successfully"));
   }
 
-  await Post.findByIdAndDelete(postId);
+  // ২. রুমের ক্ষেত্রে চেক (Owner/Admin ডিলিট করতে পারবে)
+  if (post.postOnModel === POST_TARGET_MODELS.ROOM) {
+    const membership = await RoomMembership.findOne({
+      room: post.postOnId,
+      user: userId,
+    });
+
+    // ✅ TEACHER এখন OWNER বা ADMIN হিসেবে সেভ হচ্ছে
+    if (
+      membership &&
+      (membership.role === RESOURCE_ROLES.OWNER ||
+        membership.role === RESOURCE_ROLES.ADMIN)
+    ) {
+      await Post.findByIdAndDelete(postId);
+      return res
+        .status(200)
+        .json(new ApiResponse(200, {}, "Deleted by Room Admin"));
+    }
+  }
+
+  // ৩. গ্রুপের ক্ষেত্রে চেক (Owner/Admin/Mod ডিলিট করতে পারবে)
+  if (post.postOnModel === POST_TARGET_MODELS.GROUP) {
+    const membership = await GroupMembership.findOne({
+      group: post.postOnId,
+      user: userId,
+    });
+
+    // ✅ Unified Roles Used
+    if (
+      membership &&
+      (membership.role === RESOURCE_ROLES.OWNER ||
+        membership.role === RESOURCE_ROLES.ADMIN ||
+        membership.role === RESOURCE_ROLES.MODERATOR)
+    ) {
+      await Post.findByIdAndDelete(postId);
+      return res
+        .status(200)
+        .json(new ApiResponse(200, {}, "Deleted by Group Admin"));
+    }
+  }
+
+  throw new ApiError(403, "You are not authorized to delete this post");
+});
+
+// ==========================================
+// 🚀 7. GET SPECIFIC FEED (Group/Room/Inst)
+// ==========================================
+export const getTargetFeed = asyncHandler(async (req, res) => {
+  const { targetModel, targetId } = req.params; // URL: /target/:targetModel/:targetId
+  const { page, limit } = req.query;
+
+  // ভ্যালিডেশন: targetModel সঠিক আছে কিনা (Group, Room, etc.)
+  if (!Object.values(POST_TARGET_MODELS).includes(targetModel)) {
+    throw new ApiError(400, "Invalid target model type.");
+  }
+
+  const posts = await getTargetFeedService(
+    req.user._id,
+    targetModel,
+    targetId,
+    parseInt(page) || 1,
+    parseInt(limit) || 10
+  );
 
   return res
     .status(200)
-    .json(new ApiResponse(200, {}, "Post deleted successfully"));
+    .json(
+      new ApiResponse(200, posts, `${targetModel} feed fetched successfully`)
+    );
 });

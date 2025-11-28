@@ -23,12 +23,14 @@ import commentRouter from "./routes/comment.routes.js";
 import friendshipRouter from "./routes/friendship.routes.js";
 import notificationRouter from "./routes/notification.routes.js";
 import groupRouter from "./routes/group.routes.js";
+import roomRouter from "./routes/room.routes.js";
 app.use("/api/v1/users", userRouter);
 app.use("/api/v1/posts", postRouter);
 app.use("/api/v1/comments", commentRouter);
 app.use("/api/v1/friendships", friendshipRouter);
 app.use("/api/v1/notifications", notificationRouter);
 app.use("/api/v1/groups", groupRouter);
+app.use("/api/v1/rooms", roomRouter);
 
 // ⚠️ সবার শেষে এটা বসাতে হবে
 import { errorHandler } from "./middlewares/error.middleware.js";

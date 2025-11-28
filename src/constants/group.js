@@ -14,11 +14,11 @@ export const GROUP_PRIVACY = {
   CLOSED: "CLOSED",
 };
 
-export const GROUP_ROLES = {
-  ADMIN: "ADMIN",
-  MODERATOR: "MODERATOR",
-  MEMBER: "MEMBER",
-};
+// export const GROUP_ROLES = {
+//   ADMIN: "ADMIN",
+//   MODERATOR: "MODERATOR",
+//   MEMBER: "MEMBER",
+// };
 
 export const GROUP_MEMBERSHIP_STATUS = {
   JOINED: "JOINED",
