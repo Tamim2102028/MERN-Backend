@@ -13,7 +13,7 @@ import {
   POST_TARGET_MODELS,
   REACTION_TARGET_MODELS, // ✅ ADDED
   GROUP_MEMBERSHIP_STATUS,
-  GROUP_ROLES,
+  RESOURCE_ROLES,
   GROUP_PRIVACY,
 } from "../constants/index.js";
 
@@ -52,7 +52,7 @@ export const createPostService = async (currentUser, postData, localFiles) => {
     // ৫. পারমিশন সেটিংস চেক (Only Admin Posting)
     if (
       !group.settings.allowMemberPosting &&
-      membership.role === GROUP_ROLES.MEMBER
+      membership.role === RESOURCE_ROLES.MEMBER
     ) {
       throw new ApiError(403, "Only Admins allows posting in this group.");
     }
