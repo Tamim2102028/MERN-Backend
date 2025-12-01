@@ -6,8 +6,10 @@ const app = express();
 
 app.use(
   cors({
-    origin: process.env.CORS_ORIGIN,
-    credentials: true,
+    origin: process.env.CORS_ORIGIN, // frontend url
+    credentials: true, // ✅ কুকি (Cookie) আদান-প্রদান করতে দিবে
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"], // ✅ সব ধরনের রিকোয়েস্ট এলাউ করা হলো
+    allowedHeaders: ["Content-Type", "Authorization"], // ✅ হেডার এলাউ করা হলো
   })
 );
 
