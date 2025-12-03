@@ -100,9 +100,12 @@ const registerUser = asyncHandler(async (req, res) => {
   }
 
   const user = await User.create(userPayload);
-  const createdUser = await User.findById(user._id).select(
-    "-password -refreshToken"
-  );
+
+  // ✅ Populated user data (institution ও department এর নাম সহ)
+  const createdUser = await User.findById(user._id)
+    .select("-password -refreshToken")
+    .populate("institution", "name logo type")
+    .populate("academicInfo.department", "name code");
 
   // ✅ ৩. অটো-ফলো লজিক (রেজিস্ট্রেশনের সময়)
   const followPromises = [];
@@ -185,9 +188,11 @@ const loginUser = asyncHandler(async (req, res) => {
     user._id
   );
 
-  const loggedInUser = await User.findById(user._id).select(
-    "-password -refreshToken"
-  );
+  // ✅ Populated user data (institution ও department এর নাম সহ)
+  const loggedInUser = await User.findById(user._id)
+    .select("-password -refreshToken")
+    .populate("institution", "name logo type")
+    .populate("academicInfo.department", "name code");
 
   const options = {
     httpOnly: true,
@@ -314,9 +319,16 @@ const changeCurrentPassword = asyncHandler(async (req, res) => {
 // 🚀 6. GET CURRENT USER (Me)
 // ==========================================
 const getCurrentUser = asyncHandler(async (req, res) => {
+  // ✅ Populated user data (institution ও department এর নাম সহ)
+  // req.user এ populate নেই, তাই fresh query করতে হচ্ছে
+  const user = await User.findById(req.user._id)
+    .select("-password -refreshToken")
+    .populate("institution", "name logo type")
+    .populate("academicInfo.department", "name code");
+
   return res
     .status(200)
-    .json(new ApiResponse(200, req.user, "User fetched successfully"));
+    .json(new ApiResponse(200, user, "User fetched successfully"));
 });
 
 // ==========================================
@@ -520,14 +532,24 @@ const updateAccountDetails = asyncHandler(async (req, res) => {
 // ==========================================
 // 🚀 11. GET USER PROFILE (With Friendship Status)
 // ==========================================
+/**
+ * এই API দিয়ে নিজের এবং অন্যের প্রোফাইল দেখা যায়।
+ * - নিজের প্রোফাইল হলে: friendshipStatus = "SELF"
+ * - অন্যের প্রোফাইল হলে: friendshipStatus = "FRIENDS" | "NONE" | "REQUEST_SENT" | "REQUEST_RECEIVED" | "BLOCKED"
+ *
+ * Institution ও Department populate করা হয়েছে কারণ:
+ * - Profile page এ institution ও department এর নাম দেখাতে হয়
+ * - Registration/Login response এ শুধু ID থাকে, নাম লাগে না
+ */
 const getUserProfile = asyncHandler(async (req, res) => {
   const { username } = req.params;
   const viewerId = req.user._id;
 
-  // ১. ইউজার খোঁজা
-  const user = await User.findOne({ userName: username }).select(
-    "-password -refreshToken"
-  );
+  // ১. ইউজার খোঁজা (Institution ও Department এর নাম সহ)
+  const user = await User.findOne({ userName: username })
+    .select("-password -refreshToken")
+    .populate("institution", "name logo type") // Institution এর নাম, লোগো, টাইপ
+    .populate("academicInfo.department", "name code"); // Department এর নাম ও কোড
 
   if (!user) {
     throw new ApiError(404, "User not found");
