@@ -578,8 +578,10 @@ const getUserProfile = asyncHandler(async (req, res) => {
   });
 
   let friendshipStatus = PROFILE_RELATION_STATUS.NONE; // ডিফল্ট
+  let friendshipId = null; // Accept/Reject/Cancel এর জন্য দরকার
 
   if (relationship) {
+    friendshipId = relationship._id; // Friendship document ID
     // A. ব্লকিং চেক
     if (relationship.status === FRIENDSHIP_STATUS.BLOCKED) {
       // সে আমাকে ব্লক করলে -> User Not Found
@@ -605,13 +607,13 @@ const getUserProfile = asyncHandler(async (req, res) => {
     }
   }
 
-  // ৪. রেসপন্স
+  // ৪. রেসপন্স (friendshipId সহ - Accept/Reject/Cancel এ লাগবে)
   return res
     .status(200)
     .json(
       new ApiResponse(
         200,
-        { ...user.toObject(), friendshipStatus },
+        { ...user.toObject(), friendshipStatus, friendshipId },
         "User profile fetched successfully"
       )
     );
