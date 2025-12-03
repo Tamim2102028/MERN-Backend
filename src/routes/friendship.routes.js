@@ -17,6 +17,7 @@ import {
   getSentRequests,
   getFriendsList,
   getBlockedList,
+  getFriendSuggestions,
 } from "../controllers/friendship.controllers.js";
 
 const router = Router();
@@ -63,5 +64,10 @@ router.get(
 router.get("/requests/sent", validate(getListSchema, "query"), getSentRequests);
 router.get("/list/:userId", validate(getListSchema, "query"), getFriendsList); // Friend list
 router.get("/blocked-users", validate(getListSchema, "query"), getBlockedList);
+router.get(
+  "/suggestions",
+  validate(getListSchema, "query"),
+  getFriendSuggestions
+); // Friend suggestions
 
 export default router;

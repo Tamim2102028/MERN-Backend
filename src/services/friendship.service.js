@@ -1,4 +1,3 @@
-import mongoose from "mongoose";
 import { Friendship } from "../models/friendship.model.js";
 import { User } from "../models/user.model.js";
 import { ApiError } from "../utils/ApiError.js";
@@ -296,4 +295,156 @@ export const getFriendshipListService = async (userId, type, page, limit) => {
   }
 
   return data;
+};
+
+// ==========================================
+// 8. GET FRIEND SUGGESTIONS
+// ==========================================
+/**
+ * Friend Suggestions Logic:
+ *
+ * Include (OR):
+ * - Same Institution এর users
+ * - Same Department এর users
+ * - Friends of Friends
+ *
+ * Exclude:
+ * - নিজেকে
+ * - Already Friends
+ * - Pending Incoming Requests
+ * - Pending Sent Requests
+ * - Blocked users
+ */
+export const getFriendSuggestionsService = async (userId, page, limit) => {
+  const skip = (page - 1) * limit;
+
+  // ১. Current user এর info নিই
+  const currentUser = await User.findById(userId).select(
+    "institution academicInfo.department"
+  );
+
+  if (!currentUser) {
+    throw new ApiError(404, "User not found.");
+  }
+
+  // ২. Exclude করার জন্য user IDs collect করি
+  // (Friends, Pending requests, Blocked)
+  const existingRelations = await Friendship.find({
+    $or: [{ requester: userId }, { recipient: userId }],
+  }).select("requester recipient");
+
+  const excludeUserIds = new Set([userId.toString()]); // নিজেকে exclude
+
+  existingRelations.forEach((rel) => {
+    excludeUserIds.add(rel.requester.toString());
+    excludeUserIds.add(rel.recipient.toString());
+  });
+
+  // ৩. Friends of Friends খুঁজি
+  // প্রথমে আমার friends দের IDs নিই
+  const myFriendships = await Friendship.find({
+    $or: [{ requester: userId }, { recipient: userId }],
+    status: FRIENDSHIP_STATUS.ACCEPTED,
+  }).select("requester recipient");
+
+  const myFriendIds = myFriendships.map((f) =>
+    f.requester.toString() === userId.toString()
+      ? f.recipient.toString()
+      : f.requester.toString()
+  );
+
+  // Friends এর friends খুঁজি
+  let friendsOfFriendsIds = [];
+  if (myFriendIds.length > 0) {
+    const fofRelations = await Friendship.find({
+      $or: [
+        { requester: { $in: myFriendIds } },
+        { recipient: { $in: myFriendIds } },
+      ],
+      status: FRIENDSHIP_STATUS.ACCEPTED,
+    }).select("requester recipient");
+
+    fofRelations.forEach((rel) => {
+      const id1 = rel.requester.toString();
+      const id2 = rel.recipient.toString();
+      if (!excludeUserIds.has(id1)) friendsOfFriendsIds.push(id1);
+      if (!excludeUserIds.has(id2)) friendsOfFriendsIds.push(id2);
+    });
+
+    // Unique করি
+    friendsOfFriendsIds = [...new Set(friendsOfFriendsIds)];
+  }
+
+  // ৪. Suggestions query বানাই
+  // Note: MongoDB query তে string ID ব্যবহার করলেও কাজ করে, ObjectId convert করার দরকার নেই
+  const excludeIdsArray = Array.from(excludeUserIds);
+
+  const matchConditions = [];
+
+  // Same Institution
+  if (currentUser.institution) {
+    matchConditions.push({ institution: currentUser.institution });
+  }
+
+  // Same Department
+  if (currentUser.academicInfo?.department) {
+    matchConditions.push({
+      "academicInfo.department": currentUser.academicInfo.department,
+    });
+  }
+
+  // Friends of Friends
+  if (friendsOfFriendsIds.length > 0) {
+    matchConditions.push({
+      _id: { $in: friendsOfFriendsIds },
+    });
+  }
+
+  // যদি কোনো condition না থাকে, empty return করি
+  if (matchConditions.length === 0) {
+    return {
+      data: [],
+      pagination: {
+        page,
+        limit,
+        totalDocs: 0,
+        totalPages: 0,
+        hasNextPage: false,
+        hasPrevPage: false,
+      },
+    };
+  }
+
+  // ৫. Final query
+  const queryCondition = {
+    $and: [
+      { _id: { $nin: excludeIdsArray } }, // Exclude existing relations
+      { $or: matchConditions }, // Match any of the conditions
+    ],
+  };
+
+  // Total count for pagination
+  const totalDocs = await User.countDocuments(queryCondition);
+
+  const suggestions = await User.find(queryCondition)
+    .select("fullName userName avatar institution academicInfo.department")
+    .populate("institution", "name")
+    .populate("academicInfo.department", "name")
+    .skip(skip)
+    .limit(limit)
+    .lean();
+
+  // Return with pagination info
+  const totalPages = Math.ceil(totalDocs / limit);
+  return {
+    data: suggestions,
+    pagination: {
+      page,
+      limit,
+      totalDocs,
+      totalPages,
+      hasNextPage: page < totalPages,
+      hasPrevPage: page > 1,
+    },
+  };
 };

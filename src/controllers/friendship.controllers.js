@@ -8,6 +8,7 @@ import {
   blockUserService,
   unblockUserService,
   getFriendshipListService,
+  getFriendSuggestionsService,
 } from "../services/friendship.service.js";
 
 // 1. Send Request
@@ -72,8 +73,9 @@ export const unblockUser = asyncHandler(async (req, res) => {
 
 // 7. Get Lists (Helpers)
 export const getIncomingRequests = asyncHandler(async (req, res) => {
-  const { page, limit } = req.query;
-  const list = await getFriendshipListService(
+  const page = parseInt(req.query.page) || 1;
+  const limit = parseInt(req.query.limit) || 20;
+  const result = await getFriendshipListService(
     req.user._id,
     "INCOMING",
     page,
@@ -81,12 +83,13 @@ export const getIncomingRequests = asyncHandler(async (req, res) => {
   );
   return res
     .status(200)
-    .json(new ApiResponse(200, list, "Incoming requests fetched"));
+    .json(new ApiResponse(200, result, "Incoming requests fetched"));
 });
 
 export const getSentRequests = asyncHandler(async (req, res) => {
-  const { page, limit } = req.query;
-  const list = await getFriendshipListService(
+  const page = parseInt(req.query.page) || 1;
+  const limit = parseInt(req.query.limit) || 20;
+  const result = await getFriendshipListService(
     req.user._id,
     "SENT",
     page,
@@ -94,25 +97,27 @@ export const getSentRequests = asyncHandler(async (req, res) => {
   );
   return res
     .status(200)
-    .json(new ApiResponse(200, list, "Sent requests fetched"));
+    .json(new ApiResponse(200, result, "Sent requests fetched"));
 });
 
 export const getFriendsList = asyncHandler(async (req, res) => {
   const { userId } = req.params; // নিজের অথবা অন্যের ফ্রেন্ডলিস্ট
-  const { page, limit } = req.query;
+  const page = parseInt(req.query.page) || 1;
+  const limit = parseInt(req.query.limit) || 20;
 
   // TODO: এখানে Privacy Check বসানো উচিত (Connection Visibility)।
   // আপাতত নিজেরটা দেখার জন্য বানাচ্ছি।
 
-  const list = await getFriendshipListService(userId, "FRIENDS", page, limit);
+  const result = await getFriendshipListService(userId, "FRIENDS", page, limit);
   return res
     .status(200)
-    .json(new ApiResponse(200, list, "Friends list fetched"));
+    .json(new ApiResponse(200, result, "Friends list fetched"));
 });
 
 export const getBlockedList = asyncHandler(async (req, res) => {
-  const { page, limit } = req.query;
-  const list = await getFriendshipListService(
+  const page = parseInt(req.query.page) || 1;
+  const limit = parseInt(req.query.limit) || 20;
+  const result = await getFriendshipListService(
     req.user._id,
     "BLOCKED",
     page,
@@ -120,5 +125,18 @@ export const getBlockedList = asyncHandler(async (req, res) => {
   );
   return res
     .status(200)
-    .json(new ApiResponse(200, list, "Blocked users fetched"));
+    .json(new ApiResponse(200, result, "Blocked users fetched"));
+});
+
+// 8. Get Friend Suggestions
+export const getFriendSuggestions = asyncHandler(async (req, res) => {
+  const { page = 1, limit = 20 } = req.query;
+  const suggestions = await getFriendSuggestionsService(
+    req.user._id,
+    parseInt(page),
+    parseInt(limit)
+  );
+  return res
+    .status(200)
+    .json(new ApiResponse(200, suggestions, "Friend suggestions fetched"));
 });
