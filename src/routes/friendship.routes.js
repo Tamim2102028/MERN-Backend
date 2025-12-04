@@ -5,69 +5,54 @@ import {
   friendIdSchema,
   requestIdSchema,
   getListSchema,
+  getSuggestionsSchema,
 } from "../validators/friendship.validator.js";
 import {
-  sendFriendRequest,
-  acceptFriendRequest,
-  deleteRequest,
-  unfriendUser,
-  blockUser,
-  unblockUser,
-  getIncomingRequests,
-  getSentRequests,
-  getFriendsList,
-  getBlockedList,
-  getFriendSuggestions,
+  sendRequest,
+  acceptRequest,
+  cancelRequest,
+  unfriend,
+  getList,
+  getSuggestions,
 } from "../controllers/friendship.controllers.js";
 
 const router = Router();
-router.use(verifyJWT); // সব রাউট সুরক্ষিত
+router.use(verifyJWT);
 
-// --- Request Management ---
+// Actions
 router.post(
   "/request/:userId",
   validate(friendIdSchema, "params"),
-  sendFriendRequest
+  sendRequest
 );
 router.post(
   "/accept/:requestId",
   validate(requestIdSchema, "params"),
-  acceptFriendRequest
+  acceptRequest
 );
-router.delete(
-  "/reject/:requestId",
-  validate(requestIdSchema, "params"),
-  deleteRequest
-); // Reject/Cancel একই API
 
-// --- Friendship Management ---
+// ✅ Cancel / Reject API (Sent বা Incoming ট্যাব থেকে ডিলিট করার জন্য)
+router.delete(
+  "/cancel/:requestId",
+  validate(requestIdSchema, "params"),
+  cancelRequest
+);
+
 router.delete(
   "/unfriend/:userId",
   validate(friendIdSchema, "params"),
-  unfriendUser
+  unfriend
 );
 
-// --- Blocking ---
-router.post("/block/:userId", validate(friendIdSchema, "params"), blockUser);
-router.post(
-  "/unblock/:userId",
-  validate(friendIdSchema, "params"),
-  unblockUser
-);
+// Lists (type = friends | incoming | sent | blocked)
+// Example: /api/v1/friendships/list/incoming
+router.get("/list/:type", validate(getListSchema, "params"), getList);
 
-// --- Lists ---
-router.get(
-  "/requests/incoming",
-  validate(getListSchema, "query"),
-  getIncomingRequests
-);
-router.get("/requests/sent", validate(getListSchema, "query"), getSentRequests);
-router.get("/list/:userId", validate(getListSchema, "query"), getFriendsList); // Friend list
-router.get("/blocked-users", validate(getListSchema, "query"), getBlockedList);
+// ✅ Suggestions Route
 router.get(
   "/suggestions",
-  validate(getListSchema, "query"),
-  getFriendSuggestions
-); // Friend suggestions
+  validate(getSuggestionsSchema, "query"),
+  getSuggestions
+);
 
 export default router;

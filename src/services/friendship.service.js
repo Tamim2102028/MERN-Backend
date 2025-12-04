@@ -1,159 +1,92 @@
 import { Friendship } from "../models/friendship.model.js";
 import { User } from "../models/user.model.js";
 import { ApiError } from "../utils/ApiError.js";
-import {
-  FRIENDSHIP_STATUS,
-  FRIEND_REQUEST_POLICY,
-} from "../constants/index.js";
-import { createNotification } from "./notification.service.js"; // ✅ ADDED
-import { NOTIFICATION_TYPES } from "../constants/index.js"; // ✅ ADDED
+import { FRIENDSHIP_STATUS } from "../constants/index.js";
+import { createNotification } from "./notification.service.js";
+import { NOTIFICATION_TYPES } from "../constants/index.js";
 
-// ==========================================
-// 1. SEND FRIEND REQUEST (With Privacy & Logic)
-// ==========================================
+// 1. Send Request
 export const sendFriendRequestService = async (requesterId, recipientId) => {
-  if (requesterId.toString() === recipientId.toString()) {
-    throw new ApiError(400, "You cannot send a friend request to yourself.");
-  }
+  if (requesterId.toString() === recipientId.toString())
+    throw new ApiError(400, "Invalid action");
 
-  // A. টার্গেট ইউজার এবং তার প্রাইভেসি সেটিংস চেক করা
-  const recipient = await User.findById(recipientId).select("privacySettings");
-  if (!recipient) {
-    throw new ApiError(404, "User not found.");
-  }
-
-  // 🔥 Privacy Check: সে কি রিকোয়েস্ট এলাউ করে?
-  if (
-    recipient.privacySettings?.friendRequestPolicy ===
-    FRIEND_REQUEST_POLICY.NOBODY
-  ) {
-    throw new ApiError(403, "This user does not accept friend requests.");
-  }
-
-  // B. এক্সিস্টিং রিলেশন চেক করা
-  const existingRelation = await Friendship.findOne({
+  const existing = await Friendship.findOne({
     $or: [
       { requester: requesterId, recipient: recipientId },
       { requester: recipientId, recipient: requesterId },
     ],
   });
 
-  if (existingRelation) {
-    // ১. যদি অলরেডি ফ্রেন্ড হয়
-    if (existingRelation.status === FRIENDSHIP_STATUS.ACCEPTED) {
-      throw new ApiError(400, "You are already friends.");
-    }
-    // ২. যদি ব্লকড থাকে
-    if (existingRelation.status === FRIENDSHIP_STATUS.BLOCKED) {
-      throw new ApiError(
-        403,
-        "You cannot send a request due to privacy/block settings."
-      );
-    }
-    // ৩. যদি আমি অলরেডি পাঠিয়ে থাকি
-    if (existingRelation.requester.toString() === requesterId.toString()) {
-      throw new ApiError(400, "Friend request already sent.");
-    }
-
-    // 🔥 ৪. AUTO ACCEPT LOGIC (Reverse Request)
-    // যদি সে আমাকে আগেই পাঠিয়ে থাকে (Pending), তাহলে এখন আমি পাঠালে সেটা অটোমেটিক Accept হবে
-    if (existingRelation.recipient.toString() === requesterId.toString()) {
-      existingRelation.status = FRIENDSHIP_STATUS.ACCEPTED;
-      await existingRelation.save(); // Hook will update connectionsCount
-
-      // 🔥 NOTIFICATION (Auto Accept)
-      createNotification({
-        recipient: existingRelation.requester, // যে আগে রিকোয়েস্ট দিয়েছিল
-        actor: requesterId,
-        type: NOTIFICATION_TYPES.FRIEND_ACCEPT,
-        relatedId: requesterId,
-        relatedModel: "User",
-        message: "accepted your friend request.",
-      }).catch(console.error);
-
-      return {
-        status: FRIENDSHIP_STATUS.ACCEPTED,
-        message: "Friend request accepted automatically!",
-      };
-    }
+  if (existing) {
+    if (existing.status === FRIENDSHIP_STATUS.ACCEPTED)
+      throw new ApiError(400, "Already friends");
+    if (existing.status === FRIENDSHIP_STATUS.BLOCKED)
+      throw new ApiError(403, "Action blocked");
+    if (existing.status === FRIENDSHIP_STATUS.PENDING)
+      return { message: "Request already pending" };
   }
 
-  // C. সব ঠিক থাকলে নতুন রিকোয়েস্ট তৈরি
-  const newRequest = await Friendship.create({
+  const request = await Friendship.create({
     requester: requesterId,
     recipient: recipientId,
     status: FRIENDSHIP_STATUS.PENDING,
   });
 
-  // 🔥 NOTIFICATION (New Request)
+  // Notification
   createNotification({
     recipient: recipientId,
     actor: requesterId,
     type: NOTIFICATION_TYPES.FRIEND_REQUEST,
-    relatedId: requesterId, // ক্লিক করলে ইউজারের প্রোফাইল খুলবে
+    relatedId: requesterId,
     relatedModel: "User",
     message: "sent you a friend request.",
-  }).catch(console.error);
-
-  return { status: FRIENDSHIP_STATUS.PENDING, data: newRequest };
-};
-
-// ==========================================
-// 2. ACCEPT FRIEND REQUEST
-// ==========================================
-export const acceptFriendRequestService = async (userId, requestId) => {
-  const request = await Friendship.findOne({
-    _id: requestId,
-    recipient: userId,
-    status: FRIENDSHIP_STATUS.PENDING,
-  });
-
-  if (!request) {
-    throw new ApiError(404, "Friend request not found or already processed.");
-  }
-
-  request.status = FRIENDSHIP_STATUS.ACCEPTED;
-  await request.save();
-
-  // 🔥 NOTIFICATION (Accept)
-  createNotification({
-    recipient: request.requester, // যে রিকোয়েস্ট পাঠিয়েছিল
-    actor: userId, // আমি (যে এক্সেপ্ট করলাম)
-    type: NOTIFICATION_TYPES.FRIEND_ACCEPT,
-    relatedId: userId,
-    relatedModel: "User",
-    message: "accepted your friend request.",
-  }).catch(console.error);
+  }).catch(() => {});
 
   return request;
 };
 
-// ==========================================
-// 3. REJECT / CANCEL REQUEST (Delete)
-// ==========================================
-export const deleteRequestService = async (userId, requestId) => {
-  // লজিক:
-  // - আমি যদি Recipient হই -> REJECT
-  // - আমি যদি Requester হই -> CANCEL
-
-  const request = await Friendship.findOneAndDelete({
+// 2. Accept Request
+export const acceptFriendRequestService = async (userId, requestId) => {
+  const request = await Friendship.findOne({
     _id: requestId,
-    $or: [{ requester: userId }, { recipient: userId }],
-    status: FRIENDSHIP_STATUS.PENDING, // শুধু পেন্ডিং ডিলিট করা যাবে
+    recipient: userId, // যে এক্সেপ্ট করছে সে অবশ্যই রিসিভেন্ট হতে হবে
+    status: FRIENDSHIP_STATUS.PENDING,
   });
 
-  if (!request) {
-    throw new ApiError(404, "Request not found.");
-  }
+  if (!request) throw new ApiError(404, "Request not found");
 
-  return { success: true };
+  request.status = FRIENDSHIP_STATUS.ACCEPTED;
+  await request.save();
+
+  // Notification
+  createNotification({
+    recipient: request.requester,
+    actor: userId,
+    type: NOTIFICATION_TYPES.FRIEND_ACCEPT,
+    relatedId: userId,
+    relatedModel: "User",
+    message: "accepted your friend request.",
+  }).catch(() => {});
+
+  return { message: "Accepted" };
 };
 
-// ==========================================
-// 4. UNFRIEND (Breaking Up)
-// ==========================================
+// 3. Cancel / Reject Request (আপনার চাওয়া Cancel API)
+// এটা দিয়ে Sent Request ক্যানসেল করা যাবে, আবার Incoming Request রিজেক্টও করা যাবে
+export const cancelOrRejectRequestService = async (userId, requestId) => {
+  const request = await Friendship.findOneAndDelete({
+    _id: requestId,
+    $or: [{ requester: userId }, { recipient: userId }], // আমি সেন্ডার বা রিসিভার যেই হই না কেন
+    status: FRIENDSHIP_STATUS.PENDING,
+  });
+
+  if (!request) throw new ApiError(404, "Request not found or already handled");
+  return { message: "Request removed" };
+};
+
+// 4. Unfriend
 export const unfriendUserService = async (userId, friendId) => {
-  const friendship = await Friendship.findOneAndDelete({
+  const deleted = await Friendship.findOneAndDelete({
     $or: [
       { requester: userId, recipient: friendId },
       { requester: friendId, recipient: userId },
@@ -161,288 +94,145 @@ export const unfriendUserService = async (userId, friendId) => {
     status: FRIENDSHIP_STATUS.ACCEPTED,
   });
 
-  if (!friendship) {
-    throw new ApiError(404, "Friendship not found.");
-  }
-
-  // Hook অটোমেটিক connectionsCount কমিয়ে দেবে
-  return { success: true };
+  if (!deleted) throw new ApiError(404, "Friendship not found");
+  return { message: "Unfriended" };
 };
 
-// ==========================================
-// 5. BLOCK USER
-// ==========================================
-export const blockUserService = async (userId, targetId) => {
-  if (userId.toString() === targetId.toString()) {
-    throw new ApiError(400, "You cannot block yourself.");
-  }
-
-  // ১. আগে কোনো রিলেশন আছে কিনা দেখি
-  let friendship = await Friendship.findOne({
-    $or: [
-      { requester: userId, recipient: targetId },
-      { requester: targetId, recipient: userId },
-    ],
-  });
-
-  // ২. যদি তারা ফ্রেন্ড থাকে, তবে ব্লকিং এর আগে কাউন্ট কমাতে হবে
-  // (কারণ আমরা স্ট্যাটাস আপডেট করছি, ডিলিট করছি না। ডিলিট হুক ট্রিগার হবে না)
-  if (friendship && friendship.status === FRIENDSHIP_STATUS.ACCEPTED) {
-    await User.findByIdAndUpdate(userId, { $inc: { connectionsCount: -1 } });
-    await User.findByIdAndUpdate(targetId, { $inc: { connectionsCount: -1 } });
-  }
-
-  if (friendship) {
-    // রিলেশন থাকলে আপডেট করে ব্লক করে দিচ্ছি
-    friendship.status = FRIENDSHIP_STATUS.BLOCKED;
-    friendship.blockedBy = userId; // কে ব্লক দিল
-    await friendship.save();
-  } else {
-    // রিলেশন না থাকলে নতুন ব্লক এন্ট্রি তৈরি করছি
-    await Friendship.create({
-      requester: userId,
-      recipient: targetId,
-      status: FRIENDSHIP_STATUS.BLOCKED,
-      blockedBy: userId,
-    });
-  }
-
-  return { success: true };
-};
-
-// ==========================================
-// 6. UNBLOCK USER
-// ==========================================
-export const unblockUserService = async (userId, targetId) => {
-  const friendship = await Friendship.findOneAndDelete({
-    $or: [
-      { requester: userId, recipient: targetId },
-      { requester: targetId, recipient: userId },
-    ],
-    status: FRIENDSHIP_STATUS.BLOCKED,
-    blockedBy: userId, // আমি ব্লক দিলেই কেবল আমি আনব্লক করতে পারব
-  });
-
-  if (!friendship) {
-    throw new ApiError(
-      404,
-      "Block entry not found or you didn't block this user."
-    );
-  }
-
-  return { success: true };
-};
-
-// ==========================================
-// 7. GET LISTS (Incoming / Sent / Friends)
-// ==========================================
+// 5. Get Lists (With Pagination Metadata)
 export const getFriendshipListService = async (userId, type, page, limit) => {
   const skip = (page - 1) * limit;
   let query = {};
-  let populateField = "";
 
-  if (type === "INCOMING") {
-    // আমাকে কে পাঠিয়েছে (Pending)
+  if (type === "incoming") {
     query = { recipient: userId, status: FRIENDSHIP_STATUS.PENDING };
-    populateField = "requester";
-  } else if (type === "SENT") {
-    // আমি কাকে পাঠিয়েছি (Pending)
+  } else if (type === "sent") {
     query = { requester: userId, status: FRIENDSHIP_STATUS.PENDING };
-    populateField = "recipient";
-  } else if (type === "FRIENDS") {
-    // আমার বন্ধু কারা (Accepted)
+  } else if (type === "friends") {
     query = {
       $or: [{ requester: userId }, { recipient: userId }],
       status: FRIENDSHIP_STATUS.ACCEPTED,
     };
-    // এখানে পপুলেট ডাইনামিক করতে হবে (যে আমি না, সে-ই বন্ধু)
-    // এটা সার্ভিসে করা জটিল, তাই আমরা কন্ট্রোলারে বা এখানে লুপ চালিয়ে ম্যাপ করতে পারি।
-    // অথবা Mongoose Virtuals ইউজ করতে পারি। আপাতত সিম্পল পপুলেট করছি।
-  } else if (type === "BLOCKED") {
-    query = {
-      $or: [{ requester: userId }, { recipient: userId }],
-      status: FRIENDSHIP_STATUS.BLOCKED,
-      blockedBy: userId,
-    };
+  } else if (type === "blocked") {
+    query = { requester: userId, status: FRIENDSHIP_STATUS.BLOCKED };
   }
 
-  let data = await Friendship.find(query)
+  // ✅ ১. মোট কতগুলো ডাটা আছে সেটা গোনা (Metadata এর জন্য)
+  const totalDocs = await Friendship.countDocuments(query);
+
+  const rawData = await Friendship.find(query)
     .sort({ updatedAt: -1 })
     .skip(skip)
     .limit(limit)
-    .populate("requester", "fullName userName avatar")
-    .populate("recipient", "fullName userName avatar")
+    .populate("requester", "fullName userName avatar institution")
+    .populate("recipient", "fullName userName avatar institution")
+    .populate({
+      path: "requester",
+      populate: { path: "institution", select: "name" },
+    })
+    .populate({
+      path: "recipient",
+      populate: { path: "institution", select: "name" },
+    })
     .lean();
 
-  // ফ্রেন্ডলিস্টের জন্য ডাটা ক্লিন করা (যাতে শুধু বন্ধুর প্রোফাইল থাকে)
-  if (type === "FRIENDS") {
-    data = data.map((f) => ({
-      _id: f._id, // Friendship ID (Unfriend করার জন্য লাগবে)
-      friend:
-        f.requester._id.toString() === userId.toString()
-          ? f.recipient
-          : f.requester,
-      since: f.updatedAt,
-    }));
-  } else if (type === "BLOCKED") {
-    data = data.map((f) => ({
-      _id: f._id,
-      blockedUser:
-        f.requester._id.toString() === userId.toString()
-          ? f.recipient
-          : f.requester,
-    }));
-  }
+  const formattedData = rawData
+    .map((item) => {
+      if (!item.requester || !item.recipient) return null;
 
-  return data;
+      let profileData = null;
+      if (type === "incoming") profileData = item.requester;
+      else if (type === "sent") profileData = item.recipient;
+      else if (type === "friends" || type === "blocked") {
+        profileData =
+          item.requester._id.toString() === userId.toString()
+            ? item.recipient
+            : item.requester;
+      }
+
+      return {
+        _id: item._id,
+        status: item.status,
+        createdAt: item.createdAt,
+        profile: {
+          _id: profileData._id,
+          fullName: profileData.fullName,
+          userName: profileData.userName,
+          avatar: profileData.avatar,
+          institutionName: profileData.institution?.name || "No Institution",
+        },
+      };
+    })
+    .filter((i) => i !== null);
+
+  // ✅ ২. মেটাডাটা সহ রিটার্ন করা
+  const totalPages = Math.ceil(totalDocs / limit);
+
+  return {
+    docs: formattedData, // আসল ডাটা
+    pagination: {
+      totalDocs,
+      totalPages,
+      page,
+      limit,
+      hasNextPage: page < totalPages,
+      hasPrevPage: page > 1,
+    },
+  };
 };
 
-// ==========================================
-// 8. GET FRIEND SUGGESTIONS
-// ==========================================
-/**
- * Friend Suggestions Logic:
- *
- * Include (OR):
- * - Same Institution এর users
- * - Same Department এর users
- * - Friends of Friends
- *
- * Exclude:
- * - নিজেকে
- * - Already Friends
- * - Pending Incoming Requests
- * - Pending Sent Requests
- * - Blocked users
- */
+// 6. Get Friend Suggestions (New Feature)
 export const getFriendSuggestionsService = async (userId, page, limit) => {
   const skip = (page - 1) * limit;
 
-  // ১. Current user এর info নিই
-  const currentUser = await User.findById(userId).select(
-    "institution academicInfo.department"
-  );
-
-  if (!currentUser) {
-    throw new ApiError(404, "User not found.");
-  }
-
-  // ২. Exclude করার জন্য user IDs collect করি
-  // (Friends, Pending requests, Blocked)
+  // ১. কাদের বাদ দিব? (নিজে + অলরেডি ফ্রেন্ড + রিকোয়েস্ট পাঠানো/পাওয়া + ব্লকড)
   const existingRelations = await Friendship.find({
     $or: [{ requester: userId }, { recipient: userId }],
   }).select("requester recipient");
 
-  const excludeUserIds = new Set([userId.toString()]); // নিজেকে exclude
+  const excludeIds = existingRelations.reduce(
+    (acc, rel) => {
+      acc.push(rel.requester.toString());
+      acc.push(rel.recipient.toString());
+      return acc;
+    },
+    [userId.toString()]
+  ); // নিজেকেও বাদ দিলাম
 
-  existingRelations.forEach((rel) => {
-    excludeUserIds.add(rel.requester.toString());
-    excludeUserIds.add(rel.recipient.toString());
-  });
+  // ২. ইউজার খোঁজা (যাদের ID exclude লিস্টে নেই)
+  const query = { _id: { $nin: excludeIds }, accountStatus: "ACTIVE" };
 
-  // ৩. Friends of Friends খুঁজি
-  // প্রথমে আমার friends দের IDs নিই
-  const myFriendships = await Friendship.find({
-    $or: [{ requester: userId }, { recipient: userId }],
-    status: FRIENDSHIP_STATUS.ACCEPTED,
-  }).select("requester recipient");
+  const totalDocs = await User.countDocuments(query);
 
-  const myFriendIds = myFriendships.map((f) =>
-    f.requester.toString() === userId.toString()
-      ? f.recipient.toString()
-      : f.requester.toString()
-  );
-
-  // Friends এর friends খুঁজি
-  let friendsOfFriendsIds = [];
-  if (myFriendIds.length > 0) {
-    const fofRelations = await Friendship.find({
-      $or: [
-        { requester: { $in: myFriendIds } },
-        { recipient: { $in: myFriendIds } },
-      ],
-      status: FRIENDSHIP_STATUS.ACCEPTED,
-    }).select("requester recipient");
-
-    fofRelations.forEach((rel) => {
-      const id1 = rel.requester.toString();
-      const id2 = rel.recipient.toString();
-      if (!excludeUserIds.has(id1)) friendsOfFriendsIds.push(id1);
-      if (!excludeUserIds.has(id2)) friendsOfFriendsIds.push(id2);
-    });
-
-    // Unique করি
-    friendsOfFriendsIds = [...new Set(friendsOfFriendsIds)];
-  }
-
-  // ৪. Suggestions query বানাই
-  // Note: MongoDB query তে string ID ব্যবহার করলেও কাজ করে, ObjectId convert করার দরকার নেই
-  const excludeIdsArray = Array.from(excludeUserIds);
-
-  const matchConditions = [];
-
-  // Same Institution
-  if (currentUser.institution) {
-    matchConditions.push({ institution: currentUser.institution });
-  }
-
-  // Same Department
-  if (currentUser.academicInfo?.department) {
-    matchConditions.push({
-      "academicInfo.department": currentUser.academicInfo.department,
-    });
-  }
-
-  // Friends of Friends
-  if (friendsOfFriendsIds.length > 0) {
-    matchConditions.push({
-      _id: { $in: friendsOfFriendsIds },
-    });
-  }
-
-  // যদি কোনো condition না থাকে, empty return করি
-  if (matchConditions.length === 0) {
-    return {
-      data: [],
-      pagination: {
-        page,
-        limit,
-        totalDocs: 0,
-        totalPages: 0,
-        hasNextPage: false,
-        hasPrevPage: false,
-      },
-    };
-  }
-
-  // ৫. Final query
-  const queryCondition = {
-    $and: [
-      { _id: { $nin: excludeIdsArray } }, // Exclude existing relations
-      { $or: matchConditions }, // Match any of the conditions
-    ],
-  };
-
-  // Total count for pagination
-  const totalDocs = await User.countDocuments(queryCondition);
-
-  const suggestions = await User.find(queryCondition)
-    .select("fullName userName avatar institution academicInfo.department")
-    .populate("institution", "name")
-    .populate("academicInfo.department", "name")
+  const users = await User.find(query)
+    .sort({ createdAt: -1 }) // অথবা র‍্যান্ডম করা যেতে পারে
     .skip(skip)
     .limit(limit)
+    .select("fullName userName avatar institution")
+    .populate("institution", "name")
     .lean();
 
-  // Return with pagination info
+  // ৩. ফ্রন্টএন্ডের জন্য একই ফরম্যাটে ডাটা সাজানো
+  const formattedData = users.map((u) => ({
+    _id: null, // সাজেশনে কোনো ফ্রেন্ডশিপ আইডি নেই
+    status: "NONE",
+    profile: {
+      _id: u._id,
+      fullName: u.fullName,
+      userName: u.userName,
+      avatar: u.avatar,
+      institutionName: u.institution?.name || "No Institution",
+    },
+  }));
+
   const totalPages = Math.ceil(totalDocs / limit);
+
   return {
-    data: suggestions,
+    docs: formattedData,
     pagination: {
-      page,
-      limit,
       totalDocs,
       totalPages,
+      page,
+      limit,
       hasNextPage: page < totalPages,
       hasPrevPage: page > 1,
     },
