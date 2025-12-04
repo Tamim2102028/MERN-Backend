@@ -4,7 +4,8 @@ import { validate } from "../middlewares/validate.middleware.js";
 import {
   friendIdSchema,
   requestIdSchema,
-  getListSchema,
+  getListParamSchema, // ✅ Updated Import
+  getListQuerySchema, // ✅ Updated Import
   getSuggestionsSchema,
 } from "../validators/friendship.validator.js";
 import {
@@ -30,25 +31,27 @@ router.post(
   validate(requestIdSchema, "params"),
   acceptRequest
 );
-
-// ✅ Cancel / Reject API (Sent বা Incoming ট্যাব থেকে ডিলিট করার জন্য)
 router.delete(
   "/cancel/:requestId",
   validate(requestIdSchema, "params"),
   cancelRequest
 );
-
 router.delete(
   "/unfriend/:userId",
   validate(friendIdSchema, "params"),
   unfriend
 );
 
-// Lists (type = friends | incoming | sent | blocked)
-// Example: /api/v1/friendships/list/incoming
-router.get("/list/:type", validate(getListSchema, "params"), getList);
+// Lists
+// ✅ FIX: এখানে দুইবার validate কল করা হয়েছে দুই ভিন্ন স্কিমা দিয়ে
+router.get(
+  "/list/:type",
+  validate(getListParamSchema, "params"), // টাইপ চেক করবে
+  validate(getListQuerySchema, "query"), // পেজ ও লিমিট চেক করবে
+  getList
+);
 
-// ✅ Suggestions Route
+// Suggestions
 router.get(
   "/suggestions",
   validate(getSuggestionsSchema, "query"),
