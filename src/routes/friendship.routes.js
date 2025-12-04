@@ -4,58 +4,71 @@ import { validate } from "../middlewares/validate.middleware.js";
 import {
   friendIdSchema,
   requestIdSchema,
-  getListParamSchema, // ✅ Updated Import
-  getListQuerySchema, // ✅ Updated Import
-  getSuggestionsSchema,
+  paginationSchema, // ✅ Common pagination schema
 } from "../validators/friendship.validator.js";
-import {
-  sendRequest,
-  acceptRequest,
-  cancelRequest,
-  unfriend,
-  getList,
-  getSuggestions,
-} from "../controllers/friendship.controllers.js";
+import * as FriendshipController from "../controllers/friendship.controllers.js";
 
 const router = Router();
 router.use(verifyJWT);
 
-// Actions
+// --- Actions (POST / DELETE) ---
 router.post(
   "/request/:userId",
   validate(friendIdSchema, "params"),
-  sendRequest
+  FriendshipController.sendRequest
 );
 router.post(
   "/accept/:requestId",
   validate(requestIdSchema, "params"),
-  acceptRequest
+  FriendshipController.acceptRequest
 );
 router.delete(
   "/cancel/:requestId",
   validate(requestIdSchema, "params"),
-  cancelRequest
-);
+  FriendshipController.cancelRequest
+); // For Reject/Cancel
 router.delete(
   "/unfriend/:userId",
   validate(friendIdSchema, "params"),
-  unfriend
+  FriendshipController.unfriend
 );
 
-// Lists
-// ✅ FIX: এখানে দুইবার validate কল করা হয়েছে দুই ভিন্ন স্কিমা দিয়ে
+router.post(
+  "/block/:userId",
+  validate(friendIdSchema, "params"),
+  FriendshipController.blockUser
+);
+router.post(
+  "/unblock/:userId",
+  validate(friendIdSchema, "params"),
+  FriendshipController.unblockUser
+);
+
+// --- Lists (GET) - Completely Separated ---
 router.get(
-  "/list/:type",
-  validate(getListParamSchema, "params"), // টাইপ চেক করবে
-  validate(getListQuerySchema, "query"), // পেজ ও লিমিট চেক করবে
-  getList
+  "/friends",
+  validate(paginationSchema, "query"),
+  FriendshipController.getFriends
 );
-
-// Suggestions
+router.get(
+  "/requests/incoming",
+  validate(paginationSchema, "query"),
+  FriendshipController.getIncomingRequests
+);
+router.get(
+  "/requests/sent",
+  validate(paginationSchema, "query"),
+  FriendshipController.getSentRequests
+);
+router.get(
+  "/blocked",
+  validate(paginationSchema, "query"),
+  FriendshipController.getBlockedUsers
+);
 router.get(
   "/suggestions",
-  validate(getSuggestionsSchema, "query"),
-  getSuggestions
+  validate(paginationSchema, "query"),
+  FriendshipController.getSuggestions
 );
 
 export default router;
